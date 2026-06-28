@@ -19,13 +19,15 @@ class NurseExperimentMode:
     use_llm_semantic_prior: bool = True
     use_llm_rank_repair: bool = True
     include_llm_proposal_in_graph: bool = True
+    symbolic_score_enabled: bool = True
     unsafe: bool = False
     ranker_overrides: Dict[str, Any] = field(default_factory=dict)
     prompt_profile: str = "balanced"
 
     def ranker_kwargs(self, overrides: Dict[str, Any] | None = None) -> Dict[str, Any]:
         kwargs = dict(self.ranker_overrides)
-        kwargs["allow_llm_scoring"] = bool(self.use_llm_hypotheses)
+        kwargs["allow_llm_scoring"] = bool(self.use_llm_hypotheses or self.use_llm_semantic_prior)
+        kwargs["symbolic_score_enabled"] = bool(self.symbolic_score_enabled)
         if not self.use_llm_semantic_prior:
             kwargs["llm_semantic_prior_weight"] = 0.0
         kwargs.update(overrides or {})
@@ -38,6 +40,8 @@ class NurseExperimentMode:
         if not self.use_llm_hypotheses:
             sanitized["hypotheses"] = []
             sanitized["candidate_rules"] = []
+        if not self.use_llm_semantic_prior:
+            sanitized["semantic_facts"] = []
         if not self.use_llm_rank_repair:
             sanitized["rank_repair"] = []
         if not self.include_llm_proposal_in_graph:
@@ -48,12 +52,23 @@ class NurseExperimentMode:
 _MODES: Dict[str, NurseExperimentMode] = {
     "full": NurseExperimentMode(
         name="full",
-        description="Default NURSE mode: call the LLM for grounded User Manager output while keeping the final rank fixed to the deterministic Evidence Core.",
+        description="Default NURSE mode: call the LLM before final ranking so guarded semantic facts can participate in S.",
+        use_llm_candidates=True,
+        use_llm_hypotheses=True,
+        use_llm_semantic_prior=True,
+        use_llm_rank_repair=False,
+        include_llm_proposal_in_graph=True,
+        symbolic_score_enabled=True,
+    ),
+    "wo_S": NurseExperimentMode(
+        name="wo_S",
+        description="Disable symbolic rules and guarded semantic rank facts. The LLM may still be used later for explanation only.",
         use_llm_candidates=False,
         use_llm_hypotheses=False,
         use_llm_semantic_prior=False,
         use_llm_rank_repair=False,
         include_llm_proposal_in_graph=False,
+        symbolic_score_enabled=False,
     ),
     "explanation_only": NurseExperimentMode(
         name="explanation_only",
@@ -63,6 +78,7 @@ _MODES: Dict[str, NurseExperimentMode] = {
         use_llm_semantic_prior=False,
         use_llm_rank_repair=False,
         include_llm_proposal_in_graph=False,
+        symbolic_score_enabled=False,
     ),
 }
 

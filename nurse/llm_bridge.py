@@ -7,6 +7,7 @@ import os
 from json import JSONDecodeError
 from typing import Any, Dict, Iterable, List
 
+from .llm_providers import provider_for_model
 from .matching import canonical_entity
 from .schemas import EvidenceCandidate
 
@@ -108,12 +109,16 @@ class NurseLLMBridge:
             candidates = parsed.get("candidates")
             if not isinstance(candidates, list):
                 candidates = parsed.get("candidate_evidence")
+            semantic_facts = parsed.get("semantic_facts")
+            if not isinstance(semantic_facts, list):
+                semantic_facts = parsed.get("hypotheses")
             hypotheses = parsed.get("hypotheses")
             candidate_rules = parsed.get("candidate_rules")
             rank_repair = parsed.get("rank_repair")
             return {
                 "status": "ok",
                 "model": config["model_name"],
+                "semantic_facts": semantic_facts if isinstance(semantic_facts, list) else [],
                 "candidates": candidates if isinstance(candidates, list) else [],
                 "hypotheses": hypotheses if isinstance(hypotheses, list) else [],
                 "candidate_rules": candidate_rules if isinstance(candidate_rules, list) else [],
@@ -132,11 +137,24 @@ class NurseLLMBridge:
         return bool(_get_env_var(self.required_env_key(model)))
 
     def _model_config(self, model: str) -> Dict[str, str]:
+        provider = provider_for_model(model)
         normalized = str(model or "").lower().strip()
-        model_name = _get_env_var("NURSE_OPENAI_MODEL") or (DEFAULT_OPENAI_MODEL if normalized in {"", "gpt5-nano", "gpt-5-nano"} else model)
+        if provider.name == "openai":
+            model_name = _get_env_var("NURSE_OPENAI_MODEL") or (
+                DEFAULT_OPENAI_MODEL if normalized in {"", "gpt5-nano", "gpt-5-nano"} else provider.model
+            )
+            base_url = _get_env_var("NURSE_OPENAI_BASE_URL") or provider.base_url
+        elif provider.name == "volcano":
+            model_name = provider.model
+            base_url = _get_env_var("NURSE_VOLCANO_BASE_URL") or provider.base_url
+        else:
+            model_name = provider.model
+            base_url = _get_env_var("NURSE_ZHIPU_BASE_URL") or provider.base_url
         return {
-            "env_key": "OPENAI_API_KEY",
-            "base_url": _get_env_var("NURSE_OPENAI_BASE_URL") or DEFAULT_OPENAI_BASE_URL,
+            "provider_name": provider.name,
+            "uses_openai_client": provider.uses_openai_client,
+            "env_key": provider.env_key,
+            "base_url": base_url,
             "model_name": model_name,
         }
 
@@ -163,10 +181,11 @@ class NurseLLMBridge:
                 "Put any useful but unsupported idea in unsupported_claims instead of presenting it as fact. "
                 "Do not infer from case IDs, labels, answer keys, hidden data, or prior benchmark knowledge. "
                 "No markdown or prose outside JSON."
-            )
+        )
         return (
-            "You assist NURSE RCA with bounded neural-symbolic evidence proposal. "
-            "Return one compact strict JSON object with optional arrays: hypotheses, candidates, candidate_rules. "
+            "You assist NURSE RCA with bounded neural-symbolic rank fact proposal. "
+            "Return one compact strict JSON object with optional arrays: semantic_facts, hypotheses, candidates, candidate_rules. "
+            "Use semantic_facts for any fact that may affect ranking. "
             "Use only services from service_candidates/current_ranking and evidence_ids from verified_evidence. "
             "Do not emit rank_repair unless output_contract is rank_repair_only. "
             "Do not infer from case_id, labels, answer keys, or hidden data."

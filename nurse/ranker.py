@@ -8,10 +8,10 @@ from typing import Dict, List
 
 from .closure import classify_signal
 from .counterfactual_closure import compute_counterfactual_drops, facts_from_graph
-from .evidence_program import EvidenceProgram
-from .llm_rule_induction import proposal_to_facts
+from .evidence_program import EvidenceProgram, EvidenceQueryResult
 from .matching import canonical_entity
 from .rule_bank import apply_default_rules
+from .semantic_rank_facts import normalize_and_guard_semantic_facts, semantic_fact_score
 from .schemas import EvidenceGraph, NursePrediction
 
 
@@ -50,6 +50,7 @@ class NurseRanker:
         llm_hypothesis_confidence_scale: float = 0.25,
         llm_hypothesis_max_weight: float = 0.25,
         allow_llm_scoring: bool = False,
+        symbolic_score_enabled: bool = True,
         incident_shape_prior_weight: float = 2.5,
         incident_shape_counterfactual_weight: float = 1.8,
         incident_shape_topology_weight: float = 0.8,
@@ -75,6 +76,7 @@ class NurseRanker:
         self.llm_hypothesis_confidence_scale = llm_hypothesis_confidence_scale
         self.llm_hypothesis_max_weight = llm_hypothesis_max_weight
         self.allow_llm_scoring = allow_llm_scoring
+        self.symbolic_score_enabled = symbolic_score_enabled
         self.incident_shape_prior_weight = incident_shape_prior_weight
         self.incident_shape_counterfactual_weight = incident_shape_counterfactual_weight
         self.incident_shape_topology_weight = incident_shape_topology_weight
@@ -266,28 +268,41 @@ class NurseRanker:
         evidence_ids: Dict[str, List[str]] = defaultdict(list)
         aiops_nonnode_projection = self._use_aiops_nonnode_projection(graph)
 
-        facts = facts_from_graph(graph)
+        base_facts = facts_from_graph(graph)
         service_candidates = graph.metadata.get("service_candidates") if isinstance(graph.metadata, dict) else None
-        llm_rule_facts = []
         llm_proposal = graph.metadata.get("llm_proposal") if isinstance(graph.metadata, dict) else None
+        semantic_rank_facts = []
+        semantic_rank_rejections = []
         if self.allow_llm_scoring and isinstance(llm_proposal, dict):
             verified_ids = [
                 evidence.evidence_id
                 for evidence in graph.evidences
                 if evidence.verified and evidence.evidence_id
             ]
-            llm_rule_facts = proposal_to_facts(
-                llm_proposal,
+            semantic_rank_facts, semantic_rank_rejections = normalize_and_guard_semantic_facts(
+                proposal=llm_proposal,
                 service_candidates=service_candidates or [],
                 verified_evidence_ids=verified_ids,
-                confidence_scale=self.llm_hypothesis_confidence_scale,
-                max_weight=self.llm_hypothesis_max_weight,
+                score_breakdown=graph.metadata.get("score_breakdown", {}) if isinstance(graph.metadata, dict) else {},
             )
-            facts = facts + llm_rule_facts
-        facts = facts + apply_default_rules(facts, service_candidates=service_candidates)
-        program_result = EvidenceProgram().query_root_probabilities(facts)
-        program_scores = self._normalise(program_result.scores)
-        counterfactual_scores = self._normalise(compute_counterfactual_drops(facts))
+        symbolic_facts = list(base_facts)
+        if self.symbolic_score_enabled:
+            for fact in semantic_rank_facts:
+                service = canonical_entity(fact.service)
+                if not service:
+                    continue
+                semantic_score = semantic_fact_score(fact, prior_weight=self.llm_semantic_prior_weight)
+                scores[service] += semantic_score
+                breakdown[service]["symbolic_semantic_facts"] += semantic_score
+                breakdown[service]["S"] += semantic_score
+            symbolic_facts = symbolic_facts + apply_default_rules(base_facts, service_candidates=service_candidates)
+            program_result = EvidenceProgram().query_root_probabilities(symbolic_facts)
+            program_scores = self._normalise(program_result.scores)
+            counterfactual_scores = self._normalise(compute_counterfactual_drops(symbolic_facts))
+        else:
+            program_result = EvidenceQueryResult(ranking=[], scores={}, explanations={})
+            program_scores = {}
+            counterfactual_scores = self._normalise(compute_counterfactual_drops(symbolic_facts))
         for service, value in program_scores.items():
             part = self.evidence_program_weight * value
             scores[service] += part
@@ -383,19 +398,6 @@ class NurseRanker:
                     scores[dst] += 0.05
                     breakdown[dst]["downstream_observation"] += 0.05
 
-        strong_llm_prior = 0
-        if llm_rule_facts and not self._has_infra_candidates(service_candidates):
-            seen_prior = set()
-            for index, fact in enumerate(llm_rule_facts):
-                service = canonical_entity(fact.subject)
-                if not service or service in seen_prior:
-                    continue
-                seen_prior.add(service)
-                bonus = self.llm_semantic_prior_weight * max(8.0 - (index * 1.0), 1.0)
-                scores[service] += bonus
-                breakdown[service]["llm_semantic_prior"] += bonus
-                strong_llm_prior += 1
-
         candidate_pool = graph.metadata.get("service_candidates", []) if isinstance(graph.metadata, dict) else []
         for index, candidate in enumerate(candidate_pool):
             service = canonical_entity(str(candidate))
@@ -468,8 +470,10 @@ class NurseRanker:
                 "evidence_program_scores": program_result.scores,
                 "evidence_program_explanations": program_result.explanations,
                 "metric_deviation_top_tier": metric_tier,
-                "llm_rule_facts": len(llm_rule_facts),
-                "llm_semantic_prior_facts": strong_llm_prior,
+                "llm_rule_facts": len(semantic_rank_facts),
+                "llm_semantic_prior_facts": len(semantic_rank_facts),
+                "semantic_rank_facts_used": len(semantic_rank_facts) if self.symbolic_score_enabled else 0,
+                "semantic_rank_facts_rejected": len(semantic_rank_rejections),
                 "llm_scoring_allowed": bool(self.allow_llm_scoring),
                 "incident_shape_prior_enabled": bool(incident_shape_top),
                 "incident_shape_prior_top": incident_shape_top,
