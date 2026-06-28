@@ -37,6 +37,7 @@ from .verifier import verify_candidates
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LAB_ROOT = Path(os.environ.get("NURSE_LAB_ROOT", REPO_ROOT.parent)).expanduser().resolve()
+ALARM_CACHE_ROOT = Path(os.environ.get("NURSE_ALARM_CACHE_ROOT", REPO_ROOT)).expanduser().resolve()
 LLM_CHOICES = ["gpt-5-nano"]
 
 
@@ -505,7 +506,7 @@ def run_nurse(
         labels_for_case = _labels_for_case(dataset, incident.case_id)
         if labels_for_case:
             labels[incident.case_id] = labels_for_case
-        alarm = get_or_create_alarm(incident, repo_root=REPO_ROOT, write_cache=True)
+        alarm = get_or_create_alarm(incident, repo_root=ALARM_CACHE_ROOT, write_cache=True)
         if alarm is None:
             total_seconds = time.perf_counter() - case_started
             llm_result = {"status": "not_called", "model": llm, "usage": {}}

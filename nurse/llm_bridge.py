@@ -7,6 +7,9 @@ import os
 from json import JSONDecodeError
 from typing import Any, Dict, Iterable, List
 
+from openai import OpenAI
+from zai import ZhipuAiClient
+
 from .llm_providers import provider_for_model
 from .matching import canonical_entity
 from .schemas import EvidenceCandidate
@@ -118,6 +121,7 @@ class NurseLLMBridge:
             return {
                 "status": "ok",
                 "model": config["model_name"],
+                "provider": config.get("provider_name", "openai"),
                 "semantic_facts": semantic_facts if isinstance(semantic_facts, list) else [],
                 "candidates": candidates if isinstance(candidates, list) else [],
                 "hypotheses": hypotheses if isinstance(hypotheses, list) else [],
@@ -199,34 +203,55 @@ class NurseLLMBridge:
         user_payload: Dict[str, Any],
         max_output_tokens: int,
     ) -> tuple[str, Dict[str, Any]]:
-        try:
-            from openai import OpenAI
-        except ImportError as exc:
-            raise RuntimeError("Install the `openai` package to enable NURSE LLM calls.") from exc
-
-        client = OpenAI(api_key=_get_env_var(config["env_key"]), base_url=config["base_url"])
+        client = self._client_for_config(config)
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
         ]
-        try:
-            response = client.chat.completions.create(
-                model=config["model_name"],
-                messages=messages,
-                response_format={"type": "json_object"},
-                max_completion_tokens=max_output_tokens,
-            )
-        except Exception as exc:
-            if "max_completion_tokens" not in str(exc):
-                raise
+        provider_name = str(config.get("provider_name") or "openai")
+        if provider_name == "zhipu":
             response = client.chat.completions.create(
                 model=config["model_name"],
                 messages=messages,
                 response_format={"type": "json_object"},
                 max_tokens=max_output_tokens,
             )
-        text = str(response.choices[0].message.content or "")
+        else:
+            try:
+                response = client.chat.completions.create(
+                    model=config["model_name"],
+                    messages=messages,
+                    response_format={"type": "json_object"},
+                    max_completion_tokens=max_output_tokens,
+                )
+            except Exception as exc:
+                if "max_completion_tokens" not in str(exc):
+                    raise
+                response = client.chat.completions.create(
+                    model=config["model_name"],
+                    messages=messages,
+                    response_format={"type": "json_object"},
+                    max_tokens=max_output_tokens,
+                )
+        text = self._response_text(response)
         return text, self._usage_to_dict(getattr(response, "usage", None))
+
+    def _client_for_config(self, config: Dict[str, str]) -> Any:
+        provider_name = str(config.get("provider_name") or "openai")
+        api_key = _get_env_var(config["env_key"])
+        base_url = config.get("base_url") or ""
+        if provider_name == "zhipu":
+            return ZhipuAiClient(api_key=api_key, base_url=base_url)
+        return OpenAI(api_key=api_key, base_url=base_url)
+
+    def _response_text(self, response: Any) -> str:
+        text = getattr(response, "output_text", "")
+        if text:
+            return str(text)
+        choices = getattr(response, "choices", None) or []
+        if choices:
+            return str(choices[0].message.content or "")
+        return ""
 
     def _usage_to_dict(self, usage: Any) -> Dict[str, Any]:
         if usage is None:

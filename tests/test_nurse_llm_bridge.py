@@ -207,3 +207,92 @@ def test_llm_bridge_uses_grounded_user_manager_contract(monkeypatch):
     assert "must not change" in captured["system_prompt"].lower()
     assert "unsupported_claims" in captured["system_prompt"]
     assert captured["max_output_tokens"] == 1200
+
+
+def test_zhipu_model_uses_zhipu_client_and_json_only_contract(monkeypatch):
+    captured = {"client_kwargs": None, "create_kwargs": None}
+
+    class FakeResponse:
+        def __init__(self):
+            self.choices = [
+                type("Choice", (), {"message": type("Message", (), {"content": '{"semantic_facts":[]}'})()})()
+            ]
+            self.usage = {"total_tokens": 9}
+
+    class FakeZhipuClient:
+        def __init__(self, **kwargs):
+            captured["client_kwargs"] = kwargs
+
+            class _Completions:
+                @staticmethod
+                def create(**kwargs):
+                    captured["create_kwargs"] = kwargs
+                    return FakeResponse()
+
+            class _Chat:
+                completions = _Completions()
+
+            self.chat = _Chat()
+
+    monkeypatch.setattr(llm_bridge, "_get_env_var", lambda name: "zhipu-key")
+    monkeypatch.setattr(llm_bridge, "ZhipuAiClient", FakeZhipuClient)
+
+    result = NurseLLMBridge().propose_evidence(
+        task="nurse_evidence_proposal",
+        payload={"case_id": "case-1"},
+        model="glm-4.5-air",
+    )
+
+    assert result["status"] == "ok"
+    assert result["provider"] == "zhipu"
+    assert captured["client_kwargs"]["api_key"] == "zhipu-key"
+    assert captured["create_kwargs"]["model"] == "glm-4.5-air"
+    assert "max_tokens" in captured["create_kwargs"]
+    assert "max_completion_tokens" not in captured["create_kwargs"]
+
+
+def test_volcano_model_uses_openai_compatible_client(monkeypatch):
+    captured = {"client_kwargs": None, "create_kwargs": None}
+
+    class FakeResponse:
+        def __init__(self):
+            self.choices = [
+                type("Choice", (), {"message": type("Message", (), {"content": '{"semantic_facts":[]}'})()})()
+            ]
+            self.usage = {"total_tokens": 4}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured["client_kwargs"] = kwargs
+
+            class _Completions:
+                @staticmethod
+                def create(**kwargs):
+                    captured["create_kwargs"] = kwargs
+                    return FakeResponse()
+
+            class _Chat:
+                completions = _Completions()
+
+            self.chat = _Chat()
+
+    def fake_env(name):
+        return {
+            "VOLCANO_API_KEY": "volcano-key",
+            "NURSE_VOLCANO_BASE_URL": "https://ark.cn-beijing.volces.com/api/v3",
+        }.get(name, "")
+
+    monkeypatch.setattr(llm_bridge, "_get_env_var", fake_env)
+    monkeypatch.setattr(llm_bridge, "OpenAI", FakeOpenAI)
+
+    result = NurseLLMBridge().propose_evidence(
+        task="nurse_evidence_proposal",
+        payload={"case_id": "case-1"},
+        model="ep-20260623160517-ckhj8",
+    )
+
+    assert result["status"] == "ok"
+    assert result["provider"] == "volcano"
+    assert captured["client_kwargs"]["api_key"] == "volcano-key"
+    assert "ark" in captured["client_kwargs"]["base_url"]
+    assert captured["create_kwargs"]["model"] == "ep-20260623160517-ckhj8"
