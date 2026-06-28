@@ -1,0 +1,6 @@
+{
+  "case_id": "009be6db-313",
+  "dataset": "aiops25-retained-nonnode",
+  "description": "single_case_1_aiops25",
+  "metric_score_backend": "evidence_robust"
+}

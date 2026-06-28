@@ -1,0 +1,7 @@
+﻿# Keep generated local artifacts out of source archives.
+outputs/ export-ignore
+.pytest_cache/ export-ignore
+.pytest_tmp/ export-ignore
+.venv*/ export-ignore
+*.xlsx export-ignore
+*.log export-ignore

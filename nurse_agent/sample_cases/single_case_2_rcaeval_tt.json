@@ -1,0 +1,6 @@
+{
+  "case_id": "re1tt_ts-auth-service_cpu_1",
+  "dataset": "rcaeval-tt",
+  "description": "single_case_2_rcaeval_tt",
+  "metric_score_backend": "evidence_robust"
+}

@@ -1,0 +1,27 @@
+[
+  {
+    "rule_id": "resource_bottleneck_support",
+    "when": {
+      "role": "source_metric",
+      "metric_contains": ["cpu", "memory", "mem", "disk", "process"]
+    },
+    "emit": {
+      "predicate": "rule_support",
+      "role": "rule_supports_root",
+      "weight_multiplier": 0.25
+    }
+  },
+  {
+    "rule_id": "downstream_latency_symptom",
+    "when": {
+      "role": "symptom_metric",
+      "metric_contains": ["latency", "rrt", "duration", "request", "response"],
+      "has_incoming_propagation": true
+    },
+    "emit": {
+      "predicate": "rule_penalty",
+      "role": "downstream_symptom",
+      "weight_multiplier": 0.50
+    }
+  }
+]
