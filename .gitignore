@@ -10,10 +10,13 @@ data_old/
 venv/
 env/
 .pytest_tmp/
+.pytest_tmp_local/
 .pytest_cache/
 .matplotlib/
 
 case_store/
+data/
+tmp/
 *.log
 *.xlsx
 *.bak_*

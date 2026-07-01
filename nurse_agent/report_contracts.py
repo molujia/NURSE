@@ -10,47 +10,43 @@ from nurse.schemas import NursePrediction, VerifiedRCLContext, _assert_no_forbid
 
 
 E_KEYS = {
+    "root_evidence",
     "source_evidence",
-    "symptom_evidence",
     "symptom_penalty",
     "generic_evidence",
-    "llm_verified_check",
-    "verified_infra_event",
-    "metric_deviation_consensus",
-    "metric_deviation_magnitude",
+    "semantic_fact_evidence",
 }
-S_KEYS = {"evidence_program", "service_role_prior", "metric_rank_prior", "base_closure_prior"}
-C_KEYS = {"counterfactual_drop", "incident_shape_counterfactual"}
 P_KEYS = {
-    "closure_support",
     "propagation_consistency",
-    "downstream_observation",
-    "broad_infra_fanout_attenuation",
-    "aiops_infra_projection",
-    "aiops_infra_penalty",
+    "upstream_source_penalty",
 }
-I_KEYS = {"incident_shape_prior", "incident_shape_topology_locality"}
+H_KEYS = {"history_prior"}
+R_KEYS = {"sre_rule"}
 
 
-def score_breakdown_escpi(parts: Dict[str, float]) -> Dict[str, float]:
-    """Collapse implementation-specific score parts into E/S/C/P/I."""
+def score_breakdown_ephr(parts: Dict[str, float]) -> Dict[str, float]:
+    """Collapse implementation-specific score parts into E/P/H/R."""
 
-    buckets = {"E": 0.0, "S": 0.0, "C": 0.0, "P": 0.0, "I": 0.0}
+    buckets = {"E": 0.0, "P": 0.0, "H": 0.0, "R": 0.0}
     for key, raw_value in dict(parts or {}).items():
         value = float(raw_value)
         if key in E_KEYS:
             buckets["E"] += value
-        elif key in S_KEYS:
-            buckets["S"] += value
-        elif key in C_KEYS:
-            buckets["C"] += value
         elif key in P_KEYS:
             buckets["P"] += value
-        elif key in I_KEYS:
-            buckets["I"] += value
+        elif key in H_KEYS:
+            buckets["H"] += value
+        elif key in R_KEYS:
+            buckets["R"] += value
         else:
-            buckets["S"] += value
+            buckets["E"] += value
     return {key: round(value, 6) for key, value in buckets.items()}
+
+
+def score_breakdown_escpi(parts: Dict[str, float]) -> Dict[str, float]:
+    """Backward-compatible alias kept for older callers."""
+
+    return score_breakdown_ephr(parts)
 
 
 def _evidence_lookup(context: VerifiedRCLContext) -> Dict[str, Dict[str, Any]]:
@@ -69,7 +65,7 @@ def top_k_rows(prediction: NursePrediction, *, limit: int = 5) -> List[Dict[str,
                 "rank": rank,
                 "entity": entity,
                 "score": round(float(prediction.scores.get(entity, 0.0)), 6),
-                "score_breakdown": score_breakdown_escpi(
+                "score_breakdown": score_breakdown_ephr(
                     prediction.score_breakdown.get(entity, {})
                 ),
                 "supporting_evidence_ids": list(prediction.evidence_ids.get(entity, [])),
@@ -163,7 +159,7 @@ def render_markdown_report(report: Dict[str, Any]) -> str:
     for row in report.get("top_k_ranking", []):
         lines.append(
             f"- #{row['rank']} `{row['entity']}` score={row['score']} "
-            f"E/S/C/P/I={row['score_breakdown']}"
+            f"E/P/H/R={row['score_breakdown']}"
         )
     lines.extend(["", "## Evidence Paths"])
     for path in report.get("evidence_paths", []):

@@ -20,14 +20,7 @@ from .case_order import write_case_order_manifest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LAB_ROOT = Path(os.environ.get("NURSE_LAB_ROOT", REPO_ROOT.parent)).expanduser().resolve()
 DEFAULT_SAMPLE_MODELS = [
-    "ep-20260623103508-6dkw6",
-    "Doubao-Seed-2.1-pro",
-    "ep-20260623160517-ckhj8",
-    "glm-4.5-air",
-    "glm-4.6v",
     "gpt-5-nano",
-    "gpt-5-mini",
-    "gpt-5",
 ]
 DEFAULT_SAMPLE_DATASETS = ["aiops25-retained-nonnode", "rcaeval-tt"]
 
@@ -116,6 +109,8 @@ def _summary_metrics(summary: Mapping[str, Any], predictions: Mapping[str, Seque
         "processed_cases": _safe_int(source.get("processed_cases", case_count)),
         "ranked_cases": _safe_int(source.get("ranked_cases", 0)),
         "token_usage_total": _safe_int(source.get("token_usage_total", summary.get("token_usage", 0))),
+        "candidate_expansion_rounds": _safe_int(summary.get("candidate_expansion_rounds", 0)),
+        "window_width_seconds": _safe_int(summary.get("window_width_seconds", 0)),
     }
 
 
@@ -284,16 +279,18 @@ def _run_nurse_job(
     python_exe: str,
     dataset: str,
     model: str,
+    mode: str,
     run_dir: Path,
     case_manifest: Path,
     case_limit: int,
     seed: int,
     alarm_cache_root: Path,
+    candidate_expansion_rounds: int = 2,
+    window_width_seconds: int = 480,
+    max_retries: int = 0,
 ) -> Dict[str, Any]:
     run_dir.mkdir(parents=True, exist_ok=True)
     alarm_cache_root.mkdir(parents=True, exist_ok=True)
-    env = os.environ.copy()
-    env["NURSE_ALARM_CACHE_ROOT"] = str(alarm_cache_root)
     command = [
         python_exe,
         "-m",
@@ -304,6 +301,8 @@ def _run_nurse_job(
         str(int(case_limit)),
         "--llm",
         model,
+        "--experiment-mode",
+        mode,
         "--run-dir",
         str(run_dir),
         "--resume",
@@ -312,18 +311,32 @@ def _run_nurse_job(
         str(int(seed)),
         "--case-manifest",
         str(case_manifest),
+        "--candidate-expansion-rounds",
+        str(int(candidate_expansion_rounds)),
+        "--window-width-seconds",
+        str(int(window_width_seconds)),
         "--no-progress",
     ]
-    result = subprocess.run(command, env=env, capture_output=True, text=True)
+    env = os.environ.copy()
+    env["NURSE_ALARM_CACHE_ROOT"] = str(alarm_cache_root)
+    attempts = max(1, int(max_retries) + 1)
+    result = None
+    log_chunks: list[str] = []
+    for attempt in range(1, attempts + 1):
+        result = subprocess.run(command, env=env, capture_output=True, text=True)
+        attempt_log = "\n".join(
+            part for part in (result.stdout or "", result.stderr or "") if part.strip()
+        )
+        if attempt_log:
+            log_chunks.append(f"[attempt {attempt}]\n{attempt_log}")
+        if result.returncode == 0:
+            break
     log_path = run_dir / "run.log"
-    log_text = "\n".join(
-        part for part in (result.stdout or "", result.stderr or "") if part.strip()
-    )
-    if log_text:
-        log_path.write_text(log_text, encoding="utf-8")
-    if result.returncode != 0:
+    if log_chunks:
+        log_path.write_text("\n\n".join(log_chunks), encoding="utf-8")
+    if result is None or result.returncode != 0:
         raise RuntimeError(
-            f"NURSE run failed for dataset={dataset} model={model} with exit code {result.returncode}"
+            f"NURSE run failed for dataset={dataset} model={model} with exit code {getattr(result, 'returncode', 'unknown')}"
         )
     return {
         "dataset": dataset,
@@ -342,6 +355,9 @@ def run_consistency_sample(
     seed: int = 20260628,
     sample_size: int = 25,
     workers: int = 10,
+    max_retries: int = 0,
+    candidate_expansion_rounds: int = 2,
+    window_width_seconds: int = 480,
     python_exe: str = "python",
     lab_root: str | Path = DEFAULT_LAB_ROOT,
 ) -> Dict[str, Any]:
@@ -390,11 +406,15 @@ def run_consistency_sample(
                     python_exe=python_exe,
                     dataset=job["dataset"],
                     model=job["model"],
+                    mode="full",
                     run_dir=job["run_dir"],
                     case_manifest=job["case_manifest"],
                     case_limit=sample_size,
                     seed=seed,
                     alarm_cache_root=job["alarm_cache_root"],
+                    candidate_expansion_rounds=candidate_expansion_rounds,
+                    window_width_seconds=window_width_seconds,
+                    max_retries=max_retries,
                 ): job
                 for job in jobs
             }
@@ -407,11 +427,15 @@ def run_consistency_sample(
                     python_exe=python_exe,
                     dataset=job["dataset"],
                     model=job["model"],
+                    mode="full",
                     run_dir=job["run_dir"],
                     case_manifest=job["case_manifest"],
                     case_limit=sample_size,
                     seed=seed,
                     alarm_cache_root=job["alarm_cache_root"],
+                    candidate_expansion_rounds=candidate_expansion_rounds,
+                    window_width_seconds=window_width_seconds,
+                    max_retries=max_retries,
                 )
             )
 
@@ -456,6 +480,10 @@ def run_matrix_experiment(
     seed: int = 20260628,
     case_limit: int = 0,
     workers: int = 10,
+    max_retries: int = 0,
+    candidate_expansion_rounds: int = 2,
+    window_width_seconds: int = 480,
+    report_name: str = "matrix_runs",
     python_exe: str = "python",
     lab_root: str | Path = DEFAULT_LAB_ROOT,
 ) -> Dict[str, Any]:
@@ -506,11 +534,15 @@ def run_matrix_experiment(
                     python_exe=python_exe,
                     dataset=job["dataset"],
                     model=job["model"],
+                    mode=str(job.get("mode") or "full"),
                     run_dir=job["run_dir"],
                     case_manifest=job["case_manifest"],
                     case_limit=case_limit,
                     seed=seed,
                     alarm_cache_root=job["alarm_cache_root"],
+                    candidate_expansion_rounds=candidate_expansion_rounds,
+                    window_width_seconds=window_width_seconds,
+                    max_retries=max_retries,
                 ): job
                 for job in jobs
             }
@@ -523,11 +555,15 @@ def run_matrix_experiment(
                     python_exe=python_exe,
                     dataset=job["dataset"],
                     model=job["model"],
+                    mode=str(job.get("mode") or "full"),
                     run_dir=job["run_dir"],
                     case_manifest=job["case_manifest"],
                     case_limit=case_limit,
                     seed=seed,
                     alarm_cache_root=job["alarm_cache_root"],
+                    candidate_expansion_rounds=candidate_expansion_rounds,
+                    window_width_seconds=window_width_seconds,
+                    max_retries=max_retries,
                 )
             )
 
@@ -555,13 +591,20 @@ def run_matrix_experiment(
         "datasets": [str(dataset) for dataset in datasets],
         "models": [str(model) for model in models],
         "modes": [str(mode) for mode in modes],
+        "report_name": str(report_name),
         "case_limit": int(case_limit),
         "seed": int(seed),
         "run_jobs": job_results,
         "rows": rows,
     }
-    _write_json(run_root / "matrix_runs.json", matrix_report)
-    pd.DataFrame(rows).to_csv(run_root / "matrix_runs.csv", index=False)
+    prefix = _slug(report_name or "matrix_runs")
+    json_path = run_root / f"{prefix}.json"
+    csv_path = run_root / f"{prefix}.csv"
+    xlsx_path = run_root / f"{prefix}.xlsx"
+    _write_json(json_path, matrix_report)
+    pd.DataFrame(rows).to_csv(csv_path, index=False)
+    with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
+        pd.DataFrame(rows).to_excel(writer, index=False, sheet_name="runs")
     return matrix_report
 
 
@@ -633,6 +676,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     sample.add_argument("--seed", type=int, default=20260628)
     sample.add_argument("--sample-size", type=int, default=25)
     sample.add_argument("--workers", type=int, default=10)
+    sample.add_argument("--max-retries", type=int, default=0)
+    sample.add_argument("--candidate-expansion-rounds", type=int, default=2)
+    sample.add_argument("--window-width-seconds", type=int, default=480)
     sample.add_argument("--output-root", default=str(REPO_ROOT / "outputs" / "experiments" / "nurse_model_consistency_sample"))
     sample.add_argument("--lab-root", default=str(DEFAULT_LAB_ROOT))
     sample.add_argument("--python", default="python")
@@ -648,6 +694,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     matrix.add_argument("--seed", type=int, default=20260628)
     matrix.add_argument("--case-limit", type=int, default=0)
     matrix.add_argument("--workers", type=int, default=10)
+    matrix.add_argument("--max-retries", type=int, default=0)
+    matrix.add_argument("--candidate-expansion-rounds", type=int, default=2)
+    matrix.add_argument("--window-width-seconds", type=int, default=480)
+    matrix.add_argument("--report-name", default="matrix_runs")
     matrix.add_argument("--output-root", default=str(REPO_ROOT / "outputs" / "experiments" / "nurse_sota_full_parallel"))
     matrix.add_argument("--lab-root", default=str(DEFAULT_LAB_ROOT))
     matrix.add_argument("--python", default="python")
@@ -665,6 +715,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             seed=args.seed,
             sample_size=args.sample_size,
             workers=args.workers,
+            max_retries=args.max_retries,
+            candidate_expansion_rounds=args.candidate_expansion_rounds,
+            window_width_seconds=args.window_width_seconds,
             python_exe=args.python,
             lab_root=args.lab_root,
         )
@@ -682,6 +735,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             seed=args.seed,
             case_limit=args.case_limit,
             workers=args.workers,
+            max_retries=args.max_retries,
+            candidate_expansion_rounds=args.candidate_expansion_rounds,
+            window_width_seconds=args.window_width_seconds,
+            report_name=args.report_name,
             python_exe=args.python,
             lab_root=args.lab_root,
         )

@@ -1,6 +1,12 @@
-﻿from nurse.llm_connectivity import failed_probe_results
+import json
+
+import pytest
+
+from nurse.history_prior import build_history_record
+from nurse.llm_connectivity import failed_probe_results
 from nurse.progress import format_progress_line
 from nurse.runner import (
+    _load_history_index,
     _dedupe_records,
     _is_resumable_completion,
     _llm_payload,
@@ -113,6 +119,24 @@ def test_runner_cli_accepts_gpt_experiment_mode_and_ranker_overrides():
     assert args.ranker_overrides_json == '{"metric_tier_size": 3}'
 
 
+@pytest.mark.parametrize(
+    "model",
+    [
+        "gpt-5-nano",
+        "gpt-5-mini",
+        "gpt-5",
+        "glm-4.5-air",
+        "glm-4.6v",
+        "ep-20260623160517-ckhj8",
+        "Doubao-Seed-2.1-pro",
+    ],
+)
+def test_runner_cli_accepts_release_sample_models(model):
+    args = build_arg_parser().parse_args(["--llm", model])
+
+    assert args.llm == model
+
+
 def test_runner_cli_accepts_metric_score_backend():
     args = build_arg_parser().parse_args(
         [
@@ -124,6 +148,48 @@ def test_runner_cli_accepts_metric_score_backend():
     )
 
     assert args.metric_score_backend == "alarm_fixed_window"
+
+
+def test_runner_cli_accepts_candidate_scope_controls():
+    args = build_arg_parser().parse_args(
+        [
+            "--candidate-expansion-rounds",
+            "3",
+            "--window-width-seconds",
+            "240",
+            "--history-index-in",
+            "tmp/history.json",
+        ]
+    )
+
+    assert args.candidate_expansion_rounds == 3
+    assert args.window_width_seconds == 240
+    assert args.history_index_in == "tmp/history.json"
+
+
+def test_runner_loads_seeded_history_index_from_json(tmp_path):
+    semantic_payload = {
+        "output_contract": "semantic_rank_only",
+        "service_candidates": ["checkout"],
+        "current_ranking": ["checkout"],
+        "candidate_cards": [{"service": "checkout"}],
+    }
+    record = build_history_record(
+        case_id="past-1",
+        dataset="synthetic",
+        semantic_payload=semantic_payload,
+        score_summary={"checkout": 4.0},
+        score_breakdown={"checkout": {"E": 4.0}},
+        ranked_candidates=["checkout"],
+    )
+    history_path = tmp_path / "history.json"
+    history_path.write_text(json.dumps([record], ensure_ascii=False, indent=2), encoding="utf-8")
+
+    loaded = _load_history_index(history_path)
+
+    assert len(loaded) == 1
+    assert loaded[0]["case_id"] == "past-1"
+
 
 def test_runner_cli_defaults_to_gpt_for_release_runs():
     args = build_arg_parser().parse_args([])
@@ -138,6 +204,8 @@ def test_runner_cli_rejects_no_llm_release_runs():
         assert exc.code != 0
     else:
         raise AssertionError("public Nurse CLI must reject --llm none")
+
+
 def test_runner_runtime_requires_configured_llm():
     class FakeBridge:
         def required_env_key(self, model):
@@ -165,9 +233,11 @@ def test_runner_runtime_rejects_no_llm_direct_calls():
     try:
         _require_release_llm_configuration("none", FakeBridge())
     except ValueError as exc:
-        assert "requires an LLM" in str(exc)
+        assert "real LLM model" in str(exc)
     else:
         raise AssertionError("run_nurse must reject llm='none' in release mode")
+
+
 def test_unsafe_llm_guardrail_disabled_evidence_is_marked():
     candidate = EvidenceCandidate(
         evidence_id="case-1:llm:0:checkout:cpu",

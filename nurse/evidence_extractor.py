@@ -344,12 +344,27 @@ def extract_candidates(
     alarm: AlarmArtifact,
     *,
     metric_score_backend: str = "evidence_robust",
+    service_candidates: list[str] | None = None,
 ) -> List[EvidenceCandidate]:
-    return (
-        compile_metric_candidates(incident, alarm, score_backend=metric_score_backend)
+    candidates = (
+        compile_metric_candidates(
+            incident,
+            alarm,
+            score_backend=metric_score_backend,
+            service_candidates=service_candidates,
+        )
         + extract_event_candidates(incident, alarm)
         + extract_trace_candidates(incident, alarm)
         + extract_metric_candidates(incident, alarm)
         + extract_alert_candidate(incident, alarm)
         + extract_topology_candidates(incident, alarm)
     )
+    if service_candidates:
+        allowed = {
+            canonical_entity(str(candidate))
+            for candidate in service_candidates
+            if canonical_entity(str(candidate))
+        }
+        if allowed:
+            candidates = [candidate for candidate in candidates if canonical_entity(candidate.entity) in allowed]
+    return candidates

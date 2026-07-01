@@ -357,39 +357,211 @@ def compile_metric_facts(
     )
 
 
-def service_candidates_from_incident(incident: RawIncident, alarm: AlarmArtifact | None = None) -> List[str]:
-    priorities: dict[str, int] = {}
+def _ordered_unique_services(values: Iterable[str]) -> List[str]:
+    seen: set[str] = set()
+    ordered: List[str] = []
+    for raw in values:
+        service = canonical_entity(str(raw))
+        if not service or service in seen:
+            continue
+        seen.add(service)
+        ordered.append(service)
+    return ordered
 
-    def add(value: str, priority: int) -> None:
-        service = canonical_entity(value)
+
+def _topology_adjacency(topology_edges: Iterable[tuple[str, str]]) -> dict[str, set[str]]:
+    adjacency: dict[str, set[str]] = defaultdict(set)
+    for raw_src, raw_dst in topology_edges:
+        src = canonical_entity(str(raw_src))
+        dst = canonical_entity(str(raw_dst))
+        if not src or not dst or src == dst:
+            continue
+        adjacency[src].add(dst)
+        adjacency[dst].add(src)
+    return adjacency
+
+
+def _candidate_support_profiles(
+    incident: RawIncident,
+    alarm: AlarmArtifact | None,
+) -> dict[str, dict[str, float]]:
+    if alarm is None:
+        return {}
+    profiles: dict[str, dict[str, float]] = {}
+    for fact in compile_metric_facts(incident, alarm):
+        service = canonical_entity(str(fact.subject))
         if not service:
-            return
-        if service not in priorities or priority < priorities[service]:
-            priorities[service] = priority
+            continue
+        profile = profiles.setdefault(
+            service,
+            {
+                "moderate_evidence": 0.0,
+                "medium_evidence": 0.0,
+                "strong_evidence": 0.0,
+                "max_score": 0.0,
+            },
+        )
+        score = float(fact.attrs.get("robust_z") or 0.0)
+        if score >= 3.0:
+            profile["moderate_evidence"] += 1.0
+        if score >= 5.0:
+            profile["medium_evidence"] += 1.0
+        if score >= 8.0:
+            profile["strong_evidence"] += 1.0
+        profile["max_score"] = max(float(profile["max_score"]), score)
+    return profiles
 
-    alert_entity = incident.metadata.get("alert_entity") if isinstance(incident.metadata, dict) else {}
-    if isinstance(alert_entity, dict) and alert_entity.get("entity_name"):
-        add(str(alert_entity.get("entity_name")), 0)
+
+def _candidate_admission_stage(
+    profile: dict[str, float],
+    *,
+    is_alert_entity: bool,
+) -> int | None:
+    if is_alert_entity:
+        return 0
+    strong = int(profile.get("strong_evidence", 0.0))
+    medium = int(profile.get("medium_evidence", 0.0))
+    moderate = int(profile.get("moderate_evidence", 0.0))
+    max_score = float(profile.get("max_score", 0.0))
+    if strong >= 2 or max_score >= 20.0:
+        return 0
+    if medium >= 2:
+        return 1
+    if strong >= 1:
+        return 2
+    if moderate >= 2:
+        return 3
+    if medium >= 1:
+        return 4
+    if moderate >= 1:
+        return 5
+    return None
+
+
+def _candidate_profile_sort_key(
+    service: str,
+    profile: dict[str, float],
+    *,
+    alert_entity: str,
+) -> tuple[float, float, float, float, float, str]:
+    return (
+        0.0 if service == alert_entity else 1.0,
+        -float(profile.get("strong_evidence", 0.0)),
+        -float(profile.get("medium_evidence", 0.0)),
+        -float(profile.get("moderate_evidence", 0.0)),
+        -float(profile.get("max_score", 0.0)),
+        service,
+    )
+
+
+def service_candidates_from_incident(
+    incident: RawIncident,
+    alarm: AlarmArtifact | None = None,
+    *,
+    candidate_expansion_rounds: int = 2,
+) -> List[str]:
+    adjacency = _topology_adjacency(incident.topology_edges)
+    metric_services = _ordered_unique_services(
+        key.rsplit(".", 1)[0] if "." in key else key for key in incident.metric_series
+    )
+
+    alert_entity = ""
+    if isinstance(incident.metadata, dict):
+        metadata_alert = incident.metadata.get("alert_entity") or {}
+        if isinstance(metadata_alert, dict):
+            alert_entity = canonical_entity(str(metadata_alert.get("entity_name") or ""))
+        elif metadata_alert:
+            alert_entity = canonical_entity(str(metadata_alert))
     if alarm and alarm.alert_entity:
-        add(alarm.alert_entity, 15)
+        alert_entity = canonical_entity(str(alarm.alert_entity)) or alert_entity
 
-    for src, dst in incident.topology_edges:
-        for raw in (src, dst):
-            service = canonical_entity(raw)
-            if not service:
-                continue
-            if "oteldemo." in str(raw).lower() or service in BUSINESS_SERVICES:
-                add(raw, 10)
-            else:
-                add(raw, 40)
+    support_profiles = _candidate_support_profiles(incident, alarm)
+    staged_profiles: list[tuple[int, str, dict[str, float]]] = []
+    for service, profile in support_profiles.items():
+        stage = _candidate_admission_stage(
+            profile,
+            is_alert_entity=service == alert_entity,
+        )
+        if stage is None:
+            continue
+        staged_profiles.append((stage, service, profile))
+    seed_services = [
+        service
+        for stage, service, profile in sorted(
+            staged_profiles,
+            key=lambda item: (
+                item[0],
+                _candidate_profile_sort_key(
+                    item[1],
+                    item[2],
+                    alert_entity=alert_entity,
+                ),
+            ),
+        )
+        if stage <= int(candidate_expansion_rounds)
+    ]
+    if alert_entity and alert_entity not in seed_services:
+        seed_services.insert(0, alert_entity)
+    if not seed_services and support_profiles:
+        strongest = sorted(
+            support_profiles.items(),
+            key=lambda item: _candidate_profile_sort_key(
+                item[0],
+                item[1],
+                alert_entity=alert_entity,
+            ),
+        )[0][0]
+        seed_services = [strongest]
+    if not seed_services:
+        seed_services = _ordered_unique_services(
+            ([alert_entity] if alert_entity else [])
+            + (sorted(adjacency) if adjacency else [])
+            + metric_services
+        )
 
-    for key in incident.metric_series:
-        entity = key.rsplit(".", 1)[0] if "." in key else key
-        add(entity, 20)
+    discovered_depth: dict[str, int] = {}
+    discovery_order: dict[str, int] = {}
+
+    def add(service: str, depth: int) -> bool:
+        service = canonical_entity(str(service))
+        if not service or service in discovered_depth:
+            return False
+        discovered_depth[service] = int(depth)
+        discovery_order[service] = len(discovery_order)
+        return True
+
+    frontier: List[str] = []
+    for seed in seed_services:
+        if add(seed, 0):
+            frontier.append(seed)
+
+    expansion_allowed = set(_ordered_unique_services(list(support_profiles) + ([alert_entity] if alert_entity else [])))
+    max_rounds = max(int(candidate_expansion_rounds), 0)
+    for round_index in range(1, max_rounds + 1):
+        next_frontier: List[str] = []
+        for service in frontier:
+            for neighbor in sorted(adjacency.get(service, set())):
+                if expansion_allowed and neighbor not in expansion_allowed:
+                    continue
+                if add(neighbor, round_index):
+                    next_frontier.append(neighbor)
+        if not next_frontier:
+            break
+        frontier = next_frontier
+
+    if not discovered_depth:
+        fallback = metric_services or _ordered_unique_services(sorted(adjacency))
+        if alert_entity:
+            fallback = _ordered_unique_services([alert_entity] + fallback)
+        for service in fallback:
+            add(service, 0)
+
     return [
         service
-        for service, _ in sorted(priorities.items(), key=lambda item: (item[1], item[0]))
-        if service
+        for service, _ in sorted(
+            discovered_depth.items(),
+            key=lambda item: (item[1], discovery_order.get(item[0], 0), item[0]),
+        )
     ]
 
 
@@ -401,9 +573,19 @@ def compile_metric_candidates(
     max_per_service: int = 3,
     min_score: float = 2.5,
     score_backend: str = "evidence_robust",
+    service_candidates: Iterable[str] | None = None,
+    candidate_expansion_rounds: int = 2,
 ) -> List[EvidenceCandidate]:
     candidates: List[EvidenceCandidate] = []
-    services = service_candidates_from_incident(incident, alarm)
+    services = (
+        _ordered_unique_services(service_candidates)
+        if service_candidates is not None
+        else service_candidates_from_incident(
+            incident,
+            alarm,
+            candidate_expansion_rounds=candidate_expansion_rounds,
+        )
+    )
     facts = compile_metric_facts(
         incident,
         alarm,

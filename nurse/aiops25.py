@@ -16,12 +16,25 @@ from typing import Any, Iterable, List, Sequence
 
 AIOPS25_DIR = "25\u6311\u6218\u8d5b"
 AIOPS25_RELATIVE_ROOT = ("datasets", AIOPS25_DIR, "aiopschallenge2025-main")
+AIOPS25_PUBLIC_RELATIVE_ROOT = ("datasets", "AIOps25", "aiopschallenge2025-main")
+
+
+def _join_relative(root: Path, parts: Sequence[str]) -> Path:
+    result = root
+    for part in parts:
+        result = result / part
+    return result
 
 def aiops25_root(lab_root: str | Path) -> Path:
     root = Path(lab_root)
-    for part in AIOPS25_RELATIVE_ROOT:
-        root = root / part
-    return root
+    candidates = (
+        _join_relative(root, AIOPS25_RELATIVE_ROOT),
+        _join_relative(root, AIOPS25_PUBLIC_RELATIVE_ROOT),
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
 
 
 def _repo_root() -> Path:

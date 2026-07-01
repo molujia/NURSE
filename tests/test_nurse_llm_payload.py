@@ -1,5 +1,6 @@
 ﻿from nurse.llm_payload import build_candidate_cards, build_grounded_user_manager_payload, build_rank_repair_payload
 from nurse.schemas import AlarmArtifact, NursePrediction, VerifiedEvidence, VerifiedRCLContext
+from nurse.llm_payload import build_semantic_rank_payload
 
 
 def _evidence(evidence_id, entity, signal, metric_role):
@@ -87,6 +88,73 @@ def test_rank_repair_payload_is_compact_and_rank_repair_only():
     assert "case-hidden" not in str(payload)
     assert len(str(payload)) < 12000
 
+
+def test_semantic_rank_payload_is_compact_and_semantic_rank_only():
+    alarm = AlarmArtifact(
+        case_id="case-hidden",
+        dataset="rcaeval-tt",
+        trigger_time=123,
+        window={"normal_start": 0, "normal_end": 100, "fault_start": 101, "fault_end": 200},
+        alert_entity="frontend",
+        signals=[],
+        provenance={"source": "benchmark_trigger_fixed_window_v1"},
+    )
+
+    payload = build_semantic_rank_payload(
+        alarm=alarm,
+        service_candidates=["frontend", "checkout", "ad"],
+        prediction=_prediction(),
+        verified_evidence=[_evidence("ev-ad", "ad", "cpu", "source_metric")],
+        topology_edges=[("ad", "frontend")],
+        prompt_profile="balanced",
+    )
+
+    assert payload["output_contract"] == "semantic_rank_only"
+    assert payload["incident_ref"] == "current-incident"
+    assert payload["current_ranking"] == ["frontend", "checkout", "ad"]
+    assert payload["candidate_cards"][2]["service"] == "ad"
+    assert payload["verified_evidence"][0]["evidence_id"] == "ev-ad"
+    assert "semantic_facts" in payload["semantic_policy"]
+    assert "allowed_fact_types" in payload["semantic_policy"]
+    assert payload["semantic_policy"]["allowed_fact_types"] == [
+        "root_support",
+        "source_support",
+        "symptom_support",
+    ]
+    assert payload["semantic_policy"]["fact_type_guidance"]["resource_metric_deviation"] == "source_support"
+    assert payload["semantic_policy"]["preferred_target_roles"] == ["primary_train_ticket_service"]
+    assert "case-hidden" not in str(payload)
+    assert len(str(payload)) < 12000
+
+
+def test_semantic_rank_payload_condenses_cycles_into_super_nodes():
+    alarm = AlarmArtifact(
+        case_id="case-hidden",
+        dataset="rcaeval-tt",
+        trigger_time=123,
+        window={"normal_start": 0, "normal_end": 100, "fault_start": 101, "fault_end": 200},
+        alert_entity="frontend",
+        signals=[],
+        provenance={"source": "benchmark_trigger_fixed_window_v1"},
+    )
+
+    payload = build_semantic_rank_payload(
+        alarm=alarm,
+        service_candidates=["frontend", "checkout", "ad"],
+        prediction=_prediction(),
+        verified_evidence=[_evidence("ev-ad", "ad", "cpu", "source_metric")],
+        topology_edges=[("ad", "frontend"), ("frontend", "ad"), ("frontend", "checkout")],
+        prompt_profile="balanced",
+    )
+
+    condensed = payload["condensed_topology"]
+    assert condensed["component_count"] == 2
+    assert condensed["cycle_count"] == 1
+    assert condensed["service_to_component"]["ad"] == condensed["service_to_component"]["frontend"]
+    assert condensed["edges"] == [{"caller_component": "scc_0", "callee_component": "scc_1"}]
+    assert "case-hidden" not in str(payload)
+    assert len(str(payload)) < 12000
+
 def test_rank_repair_payload_limits_cards_and_mentions_symptom_heavy_entrypoint():
     ranked = [f"svc-{index}" for index in range(15)]
     prediction = NursePrediction(
@@ -147,6 +215,43 @@ def test_aiops_payload_marks_semantic_roles_without_labels():
     assert by_service["ad"]["semantic_role"] == "application_candidate"
     assert by_service["k8s-master2"]["semantic_role"] == "blocked_infra_for_retained_nonnode"
     assert "root_cause" not in str(cards).lower()
+
+
+def test_aiops_semantic_rank_payload_prefers_application_candidates():
+    prediction = NursePrediction(
+        case_id="case-hidden",
+        ranked=["frontend", "ad", "k8s-master2"],
+        scores={"frontend": 3.0, "ad": 2.0, "k8s-master2": 1.0},
+        score_breakdown={"frontend": {}, "ad": {}, "k8s-master2": {}},
+        evidence_ids={"frontend": ["ev-frontend"], "ad": ["ev-ad"], "k8s-master2": ["ev-k8s"]},
+        closure_paths=[],
+    )
+
+    payload = build_semantic_rank_payload(
+        alarm=AlarmArtifact(
+            case_id="case-hidden",
+            dataset="aiops25-retained-nonnode",
+            trigger_time=123,
+            window={"normal_start": 0, "normal_end": 100, "fault_start": 101, "fault_end": 200},
+            alert_entity="frontend",
+            signals=[],
+            provenance={"source": "benchmark_trigger_fixed_window_v1"},
+        ),
+        service_candidates=["frontend", "ad", "k8s-master2"],
+        prediction=prediction,
+        verified_evidence=[
+            _evidence("ev-frontend", "frontend", "rrt", "symptom_metric"),
+            _evidence("ev-ad", "ad", "cpu", "source_metric"),
+            _evidence("ev-k8s", "k8s-master2", "node_cpu_usage_rate", "source_metric"),
+        ],
+        topology_edges=[],
+        prompt_profile="balanced",
+    )
+
+    assert payload["semantic_policy"]["preferred_target_roles"] == ["application_candidate"]
+    assert "symptom_prone_entrypoint" in payload["semantic_policy"]["discouraged_target_roles"]
+    assert "blocked_infra_for_retained_nonnode" in payload["semantic_policy"]["discouraged_target_roles"]
+
 
 def test_aiops_rank_repair_payload_matches_top_two_guardrail():
     ranked = ["payment", "ad", "pd", "frontend"]

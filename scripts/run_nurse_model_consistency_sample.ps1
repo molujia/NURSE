@@ -1,18 +1,12 @@
 param(
-    [string[]]$Models = @(
-        "ep-20260623103508-6dkw6",
-        "Doubao-Seed-2.1-pro",
-        "ep-20260623160517-ckhj8",
-        "glm-4.5-air",
-        "glm-4.6v",
-        "gpt-5-nano",
-        "gpt-5-mini",
-        "gpt-5"
-    ),
+    [string[]]$Models = @("gpt-5-nano"),
     [string[]]$Datasets = @("aiops25-retained-nonnode", "rcaeval-tt"),
     [int]$Seed = 20260628,
     [int]$SampleSize = 25,
     [int]$Workers = 10,
+    [int]$MaxRetries = 2,
+    [int]$CandidateExpansionRounds = 2,
+    [int]$WindowWidthSeconds = 480,
     [string]$OutputRoot = "outputs\experiments\nurse_model_consistency_sample",
     [string]$LabRoot = "",
     [string]$Python = "python"
@@ -32,6 +26,9 @@ try {
         "--seed", $Seed,
         "--sample-size", $SampleSize,
         "--workers", $Workers,
+        "--max-retries", $MaxRetries,
+        "--candidate-expansion-rounds", $CandidateExpansionRounds,
+        "--window-width-seconds", $WindowWidthSeconds,
         "--output-root", $OutputRoot,
         "--python", $Python
     )

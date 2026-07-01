@@ -31,12 +31,21 @@ class RawIncident:
         _assert_no_forbidden(self.metadata)
 
 
-def load_raw_incident(case_dir: str | Path, dataset: str | None = None) -> RawIncident:
+def load_raw_incident(
+    case_dir: str | Path,
+    dataset: str | None = None,
+    *,
+    window_width_seconds: int = 480,
+) -> RawIncident:
     path = Path(case_dir)
     if (path / "case.json").exists():
         descriptor = _load_json(path / "case.json")
         if descriptor.get("source_layout") == "AIOps25":
-            return _load_aiops25_case(path, dataset=dataset or "aiops25-retained-nonnode")
+            return _load_aiops25_case(
+                path,
+                dataset=dataset or "aiops25-retained-nonnode",
+                window_width_seconds=window_width_seconds,
+            )
     if (path / "metrics.json").exists():
         return _load_rcaeval_tt_case(path, dataset=dataset or "rcaeval-tt")
     raise ValueError(f"Unsupported public NURSE incident layout: {path}")
@@ -241,7 +250,12 @@ def _aiops25_files_for_window(root: Path, start: datetime, end: datetime, subdir
     return files
 
 
-def _load_aiops25_case(path: Path, dataset: str = "aiops25-retained-nonnode") -> RawIncident:
+def _load_aiops25_case(
+    path: Path,
+    dataset: str = "aiops25-retained-nonnode",
+    *,
+    window_width_seconds: int = 480,
+) -> RawIncident:
     descriptor = _load_json(path / "case.json")
     root = Path(descriptor["raw_paths"]["root"])
     start_time = _parse_aiops25_time(descriptor.get("start_time"))
@@ -250,8 +264,9 @@ def _load_aiops25_case(path: Path, dataset: str = "aiops25-retained-nonnode") ->
         raise ValueError(f"AIOps25 descriptor missing start_time: {path}")
     if end_time is None:
         end_time = start_time
-    normal_start = start_time - timedelta(seconds=480)
-    fault_end = start_time + timedelta(seconds=480)
+    width_seconds = max(int(window_width_seconds), 1)
+    normal_start = start_time - timedelta(seconds=width_seconds)
+    fault_end = start_time + timedelta(seconds=width_seconds)
     metric_series, topology_edges, metric_adapter = _load_aiops25_metric_series(root, normal_start, fault_end)
     log_files = _aiops25_files_for_window(root, normal_start, fault_end, "log-parquet")
     trace_files = _aiops25_files_for_window(root, normal_start, fault_end, "trace-parquet")
@@ -273,6 +288,9 @@ def _load_aiops25_case(path: Path, dataset: str = "aiops25-retained-nonnode") ->
         "log_files": [str(item) for item in log_files],
         "trace_files": [str(item) for item in trace_files],
         "selected_date_dirs": [str(item) for item in date_dirs_for_window(root, normal_start, fault_end)],
+        "window_width_seconds": width_seconds,
+        "normal_window_seconds": width_seconds,
+        "fault_window_seconds": width_seconds,
     }
     return RawIncident(
         dataset=dataset,

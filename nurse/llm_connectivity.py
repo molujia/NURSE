@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
-from .llm_bridge import DEFAULT_OPENAI_MODEL, NurseLLMBridge, _get_env_var
+from .llm_bridge import DEFAULT_OPENAI_MODEL, NurseLLMBridge
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -40,9 +40,9 @@ def probe_models(*, models: List[str], openai_model: Optional[str], openai_base_
     bridge = NurseLLMBridge()
     results = []
     for model in models:
-        env_key = bridge.required_env_key(model)
         started = time.perf_counter()
-        if not _get_env_var(env_key):
+        if not bridge.has_credentials(model):
+            env_key = bridge.required_env_key(model)
             results.append(
                 {
                     "model": model,

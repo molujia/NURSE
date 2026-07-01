@@ -143,10 +143,10 @@ def select_case_dirs_from_order(
 ) -> list[Path]:
     by_id = {path.name: path for path in case_dirs_for_dataset(dataset, lab_root)}
     selected_ids: list[str] = []
-    if manifest is not None:
-        selected_ids = _case_ids_from_manifest(dataset, manifest)
-    elif case_ids_file:
+    if case_ids_file:
         selected_ids = _case_ids_from_file(case_ids_file)
+    elif manifest is not None:
+        selected_ids = _case_ids_from_manifest(dataset, manifest)
     elif case_ids is not None:
         selected_ids = [str(value) for value in case_ids]
 
@@ -162,6 +162,7 @@ def select_case_dirs_from_order(
     if case_limit and case_limit > 0:
         paths = paths[:case_limit]
     return paths
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate a shared case-order manifest")

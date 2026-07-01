@@ -11,10 +11,12 @@ Use this checklist before submitting the artifact to HotCRP, publishing an anony
 - [ ] `LICENSE` is present for the NURSE implementation.
 - [ ] Dataset sources and original release terms are documented.
 - [ ] Full benchmark replication commands are documented.
+- [ ] OpenAI `gpt-5-nano` smoke commands are documented.
+- [ ] SOTA full, E/P/H ablation, consistency, and aggregation entrypoints are documented.
 - [ ] Output paths and expected summary files are documented.
 - [ ] No API keys, private endpoints, local absolute paths, private logs, or human-participant identifiers are committed.
 - [ ] Signed consent forms and identifiable human-study free text are excluded.
-- [ ] Generated outputs, virtual environments, caches, and local datasets are excluded.
+- [ ] Generated outputs, `tmp/`, virtual environments, caches, local datasets, and bundled benchmark metadata are excluded.
 
 ## Recommended
 

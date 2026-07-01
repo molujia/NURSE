@@ -47,6 +47,10 @@ def package_verified_rcl_context(
         for evidence in graph.evidences
         if evidence.verified and evidence.evidence_id
     ]
+    candidate_scope = dict(graph.metadata.get("candidate_scope") or {}) if isinstance(graph.metadata, dict) else {}
+    advisory = dict(llm_advisory or {})
+    if candidate_scope:
+        advisory.setdefault("candidate_scope", candidate_scope)
     return VerifiedRCLContext(
         case_id=prediction.case_id,
         dataset=str(dataset),
@@ -62,10 +66,12 @@ def package_verified_rcl_context(
         evidence_summaries=verified_summaries,
         closure_paths=list(prediction.closure_paths),
         rejected_items=list(rejected_items or []),
-        advisory=dict(llm_advisory or {}),
+        advisory=advisory,
         provenance={
             "rank_path": "evidence_core_v2",
             "ranker": prediction.metadata.get("ranker", ""),
             "llm_rank_mutation": False,
+            "candidate_expansion_rounds": int(candidate_scope.get("candidate_expansion_rounds", 0) or 0),
+            "window_width_seconds": int(candidate_scope.get("window_width_seconds", 0) or 0),
         },
     )

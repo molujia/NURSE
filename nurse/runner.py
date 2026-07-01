@@ -20,11 +20,12 @@ from .context_packager import package_verified_rcl_context
 from .evidence_extractor import extract_candidates
 from .experiment_modes import experiment_mode_choices, load_experiment_mode, parse_ranker_overrides
 from .experiment_stats import write_experiment_statistics
+from .history_prior import build_history_record, load_history_records
 from .labels import load_labels_for_dataset
 from .matching import hit_at
 from .incident_shape_prior import build_incident_shape_features, score_incident_shape_prior
 from .llm_bridge import NurseLLMBridge, llm_candidates_to_evidence
-from .llm_payload import AIOPS_RETAINED_BLOCKED_INFRA_PREFIXES, AIOPS_SYMPTOM_FAMILY_TOP3_RESCUE, AIOPS_SYMPTOM_PRONE_ENTRYPOINTS, RCAEVAL_TT_PRIMARY_SERVICES, build_grounded_user_manager_payload, build_rank_repair_payload, rank_repair_limits_for
+from .llm_payload import AIOPS_RETAINED_BLOCKED_INFRA_PREFIXES, AIOPS_SYMPTOM_FAMILY_TOP3_RESCUE, AIOPS_SYMPTOM_PRONE_ENTRYPOINTS, RCAEVAL_TT_PRIMARY_SERVICES, build_grounded_user_manager_payload, build_rank_repair_payload, build_semantic_rank_payload, rank_repair_limits_for
 from .metric_deviation import service_metric_deviation_scores
 from .neural_rank_repair import apply_primary_service_slot_rescue, apply_symptom_family_top3_rescue, apply_verified_rank_repair
 from .progress import format_progress_line
@@ -38,14 +39,22 @@ from .verifier import verify_candidates
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LAB_ROOT = Path(os.environ.get("NURSE_LAB_ROOT", REPO_ROOT.parent)).expanduser().resolve()
 ALARM_CACHE_ROOT = Path(os.environ.get("NURSE_ALARM_CACHE_ROOT", REPO_ROOT)).expanduser().resolve()
-LLM_CHOICES = ["gpt-5-nano"]
+
+
+def _release_llm_model(value: str) -> str:
+    model = str(value or "").strip()
+    if not model:
+        raise argparse.ArgumentTypeError("Nurse release requires a non-empty --llm model.")
+    if model.lower() == "none":
+        raise argparse.ArgumentTypeError("Nurse release requires a real LLM model, not 'none'.")
+    return model
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run Nurse root-cause localization")
     parser.add_argument("--dataset", choices=dataset_choices(), default="rcaeval-tt")
     parser.add_argument("--case-limit", type=int, default=5)
-    parser.add_argument("--llm", choices=LLM_CHOICES, default="gpt-5-nano")
+    parser.add_argument("--llm", type=_release_llm_model, default="gpt-5-nano")
     parser.add_argument("--output-root", default=str(REPO_ROOT / "outputs" / "nurse" / "runs"))
     parser.add_argument("--run-dir", default=None)
     parser.add_argument("--resume", action="store_true")
@@ -84,6 +93,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=sorted(METRIC_SCORE_BACKENDS),
         default="evidence_robust",
         help="Metric anomaly score backend for Nurse evidence and metric profile scoring.",
+    )
+    parser.add_argument(
+        "--candidate-expansion-rounds",
+        type=int,
+        default=2,
+        help="Maximum topology-aware candidate expansion rounds (MJ).",
+    )
+    parser.add_argument(
+        "--window-width-seconds",
+        type=int,
+        default=480,
+        help="Fault/baseline window width in seconds (W).",
+    )
+    parser.add_argument(
+        "--history-index-in",
+        default="",
+        help="Optional approved history index JSON/JSONL used to seed H(s) before this run begins.",
     )
     return parser
 
@@ -164,16 +190,25 @@ def _load_json_dict(path: Path) -> Dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _load_history_index(path: str | Path | None) -> List[Dict]:
+    if path is None:
+        return []
+    text = str(path).strip()
+    if not text:
+        return []
+    return [dict(item) for item in load_history_records(text)]
+
+
 def _require_release_llm_configuration(llm: str, llm_bridge: NurseLLMBridge, *, allow_no_llm: bool = False) -> None:
     if str(llm or "").strip().lower() == "none":
         if allow_no_llm:
             return
-        raise ValueError("Nurse release requires an LLM; use --llm gpt-5-nano.")
+        raise ValueError("Nurse release requires a real LLM model.")
     if not llm_bridge.has_credentials(llm):
         env_key = llm_bridge.required_env_key(llm)
         raise RuntimeError(
             f"Missing {env_key}. Configure an LLM key before running Nurse. "
-            "For the release quick start, set OPENAI_API_KEY and run --llm gpt-5-nano."
+            "Set the provider-specific key for the selected model and retry."
         )
 
 def _load_records(path: Path) -> List[Dict]:
@@ -341,6 +376,8 @@ def _write_run_state(
     labels: Dict[str, List[str]],
     start_run: float,
     token_usage: int,
+    candidate_expansion_rounds: int,
+    window_width_seconds: int,
 ) -> None:
     records = _dedupe_records(records)
     run_metrics = _metrics(predictions, labels, sum(1 for record in records if record.get("status") == "ranked"))
@@ -352,6 +389,12 @@ def _write_run_state(
         "records": records,
         "elapsed_seconds": round(time.perf_counter() - start_run, 3),
         "token_usage": token_usage,
+        "candidate_expansion_rounds": int(candidate_expansion_rounds),
+        "window_width_seconds": int(window_width_seconds),
+        "candidate_scope": {
+            "candidate_expansion_rounds": int(candidate_expansion_rounds),
+            "window_width_seconds": int(window_width_seconds),
+        },
         "metrics": run_metrics,
         "nurse_top1": run_metrics["acc_at_1"],
         "llm_status_counts": dict(sorted(llm_status_counts.items())),
@@ -396,6 +439,9 @@ def run_nurse(
     case_ids_file: str | Path | None = None,
     allow_no_llm: bool = False,
     metric_score_backend: str = "evidence_robust",
+    candidate_expansion_rounds: int = 2,
+    window_width_seconds: int = 480,
+    history_index_in: str | Path | None = None,
 ) -> Path:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = Path(run_dir) if run_dir else Path(output_root) / f"{dataset}_{ts}"
@@ -425,6 +471,11 @@ def run_nurse(
     ranker_kwargs.update(mode.ranker_kwargs(ranker_overrides))
     ranker = NurseRanker(**ranker_kwargs)
     detector_config = dict(DEFAULT_DETECTOR_CONFIG)
+    width_seconds = max(int(window_width_seconds), 1)
+    detector_config["fault_window_seconds"] = width_seconds
+    detector_config["normal_window_seconds"] = width_seconds
+    detector_config["window_width_seconds"] = width_seconds
+    seeded_history_index = _load_history_index(history_index_in)
     config = {
         "method": "Nurse",
         "dataset": dataset,
@@ -434,15 +485,25 @@ def run_nurse(
         "experiment_mode_description": mode.description,
         "prompt_profile": prompt_profile,
         "metric_score_backend": metric_score_backend,
+        "candidate_expansion_rounds": int(candidate_expansion_rounds),
+        "window_width_seconds": width_seconds,
         "unsafe_experiment_mode": mode.unsafe,
         "ranking_engine": ranking_engine,
         "optimization_round": optimization_round,
         "detector": detector_config,
+        "candidate_scope": {
+            "candidate_expansion_rounds": int(candidate_expansion_rounds),
+            "window_width_seconds": width_seconds,
+        },
         "case_order": {
             "shuffle": bool(shuffle),
             "seed": int(seed),
             "case_manifest": str(case_manifest or ""),
             "case_ids_file": str(case_ids_file or ""),
+        },
+        "history": {
+            "history_index_in": str(history_index_in or ""),
+            "seeded_history_count": len(seeded_history_index),
         },
         "ranker": {
             "source_weight": ranker.source_weight,
@@ -451,6 +512,10 @@ def run_nurse(
             "support_bonus": ranker.support_bonus,
             "propagation_bonus": ranker.propagation_bonus,
             "symptom_penalty": ranker.symptom_penalty,
+            "lambda_e": ranker.lambda_e,
+            "lambda_p": ranker.lambda_p,
+            "lambda_h": ranker.lambda_h,
+            "lambda_r": ranker.lambda_r,
             "evidence_program_weight": ranker.evidence_program_weight,
             "counterfactual_weight": ranker.counterfactual_weight,
             "metric_profile_enabled": ranker.metric_profile_enabled,
@@ -463,9 +528,15 @@ def run_nurse(
             "llm_semantic_prior_weight": ranker.llm_semantic_prior_weight,
             "llm_hypothesis_confidence_scale": ranker.llm_hypothesis_confidence_scale,
             "llm_hypothesis_max_weight": ranker.llm_hypothesis_max_weight,
+            "history_prior_weight": ranker.history_prior_weight,
+            "history_prior_top_k": ranker.history_prior_top_k,
+            "propagation_observation_weight": ranker.propagation_observation_weight,
+            "rule_score_weight": ranker.rule_score_weight,
             "incident_shape_prior_weight": ranker.incident_shape_prior_weight,
             "incident_shape_counterfactual_weight": ranker.incident_shape_counterfactual_weight,
             "incident_shape_topology_weight": ranker.incident_shape_topology_weight,
+            "aiops_infra_projection_weight": ranker.aiops_infra_projection_weight,
+            "aiops_infra_penalty_weight": ranker.aiops_infra_penalty_weight,
         },
     }
     (run_dir / "config.json").write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -474,6 +545,7 @@ def run_nurse(
         config_out_path.parent.mkdir(parents=True, exist_ok=True)
         config_out_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
     start_run = time.perf_counter()
+    history_index: List[Dict[str, object]] = [dict(item) for item in seeded_history_index]
     previous_summary = _load_json_dict(run_dir / "summary.json") if resume else {}
     token_usage = int(previous_summary.get("token_usage", 0) or 0)
     case_dirs = _selected_case_dirs(
@@ -488,7 +560,7 @@ def run_nurse(
     for index, case_dir in enumerate(case_dirs, start=1):
         case_started = time.perf_counter()
         llm_seconds = 0.0
-        incident = load_raw_incident(case_dir, dataset=dataset)
+        incident = load_raw_incident(case_dir, dataset=dataset, window_width_seconds=width_seconds)
         if resume and incident.case_id in completed_cases:
             if progress:
                 print(
@@ -506,7 +578,12 @@ def run_nurse(
         labels_for_case = _labels_for_case(dataset, incident.case_id)
         if labels_for_case:
             labels[incident.case_id] = labels_for_case
-        alarm = get_or_create_alarm(incident, repo_root=ALARM_CACHE_ROOT, write_cache=True)
+        alarm = get_or_create_alarm(
+            incident,
+            repo_root=ALARM_CACHE_ROOT,
+            write_cache=True,
+            window_width_seconds=width_seconds,
+        )
         if alarm is None:
             total_seconds = time.perf_counter() - case_started
             llm_result = {"status": "not_called", "model": llm, "usage": {}}
@@ -529,6 +606,8 @@ def run_nurse(
                 labels=labels,
                 start_run=start_run,
                 token_usage=token_usage,
+                candidate_expansion_rounds=candidate_expansion_rounds,
+                window_width_seconds=width_seconds,
             )
             if progress:
                 print(
@@ -543,7 +622,11 @@ def run_nurse(
                     flush=True,
                 )
             continue
-        service_candidates = service_candidates_from_incident(incident, alarm)
+        service_candidates = service_candidates_from_incident(
+            incident,
+            alarm,
+            candidate_expansion_rounds=candidate_expansion_rounds,
+        )
         metric_deviation_by_metric = service_metric_deviation_scores(
             incident,
             alarm,
@@ -562,7 +645,12 @@ def run_nurse(
             dataset,
         )
         incident_shape_prior_scores = score_incident_shape_prior(incident_shape_features)
-        candidates = extract_candidates(incident, alarm, metric_score_backend=metric_score_backend)
+        candidates = extract_candidates(
+            incident,
+            alarm,
+            metric_score_backend=metric_score_backend,
+            service_candidates=service_candidates,
+        )
         verified = verify_candidates(incident, candidates)
         preliminary_graph = build_evidence_graph(
             case_id=incident.case_id,
@@ -572,30 +660,55 @@ def run_nurse(
         )
         preliminary_graph.metadata["dataset"] = dataset
         preliminary_graph.metadata["service_candidates"] = service_candidates
+        preliminary_graph.metadata["candidate_scope"] = {
+            "candidate_expansion_rounds": int(candidate_expansion_rounds),
+            "window_width_seconds": width_seconds,
+            "candidate_count": len(service_candidates),
+            "warning": (
+                "only_alarm_entity_survived_candidate_expansion"
+                if len(service_candidates) <= 1
+                else ""
+            ),
+        }
         preliminary_graph.metadata["metric_deviation_scores"] = metric_deviation_scores
         preliminary_graph.metadata["metric_deviation_by_metric"] = metric_deviation_by_metric
         preliminary_graph.metadata["incident_shape_features"] = incident_shape_features
         preliminary_graph.metadata["incident_shape_prior_scores"] = incident_shape_prior_scores
         preliminary_prediction = ranker.rank(preliminary_graph)
+        semantic_rank_payload = build_semantic_rank_payload(
+            alarm=alarm,
+            service_candidates=service_candidates,
+            prediction=preliminary_prediction,
+            verified_evidence=verified,
+            topology_edges=incident.topology_edges,
+            prompt_profile=prompt_profile,
+        )
         bounded_llm_rank_effects = bool(
-            mode.use_llm_candidates or mode.use_llm_hypotheses or mode.use_llm_rank_repair
+            mode.use_llm_semantic_prior or mode.use_llm_candidates or mode.use_llm_hypotheses or mode.use_llm_rank_repair
         )
         if llm != "none" and mode.call_llm and bounded_llm_rank_effects:
             llm_started = time.perf_counter()
-            llm_result = llm_bridge.propose_evidence(
-                task="nurse_rank_repair" if mode.use_llm_rank_repair else "nurse_evidence_proposal",
-                payload=build_rank_repair_payload(
+            if mode.use_llm_rank_repair:
+                llm_task = "nurse_rank_repair"
+                llm_payload = build_rank_repair_payload(
                     alarm=alarm,
                     service_candidates=service_candidates,
                     prediction=preliminary_prediction,
                     verified_evidence=verified,
                     topology_edges=incident.topology_edges,
                     prompt_profile=prompt_profile,
-                ),
+                )
+            else:
+                llm_task = "nurse_semantic_rank"
+                llm_payload = semantic_rank_payload
+            llm_result = llm_bridge.propose_evidence(
+                task=llm_task,
+                payload=llm_payload,
                 model=llm,
             )
             llm_seconds += time.perf_counter() - llm_started
             raw_llm_proposal = llm_result.get("proposal") or {
+                "semantic_facts": llm_result.get("semantic_facts", []),
                 "rank_repair": llm_result.get("rank_repair", []),
                 "hypotheses": llm_result.get("hypotheses", []),
                 "candidate_rules": llm_result.get("candidate_rules", []),
@@ -610,6 +723,8 @@ def run_nurse(
                         "experiment_mode": mode.name,
                         "prompt_profile": prompt_profile,
                         "metric_score_backend": metric_score_backend,
+                        "candidate_expansion_rounds": int(candidate_expansion_rounds),
+                        "window_width_seconds": width_seconds,
                         "llm_role": "bounded_rank_repair_or_evidence_proposal",
                         "result": llm_result,
                         "sanitized_proposal": sanitized_llm_proposal,
@@ -645,12 +760,16 @@ def run_nurse(
         )
         graph.metadata["dataset"] = dataset
         graph.metadata["service_candidates"] = service_candidates
+        graph.metadata["candidate_scope"] = dict(preliminary_graph.metadata.get("candidate_scope") or {})
         graph.metadata["metric_deviation_scores"] = metric_deviation_scores
         graph.metadata["metric_deviation_by_metric"] = metric_deviation_by_metric
         graph.metadata["incident_shape_features"] = incident_shape_features
         graph.metadata["incident_shape_prior_scores"] = incident_shape_prior_scores
         graph.metadata["experiment_mode"] = mode.name
         graph.metadata["prompt_profile"] = prompt_profile
+        graph.metadata["semantic_rank_payload"] = semantic_rank_payload
+        graph.metadata["approved_history_index"] = list(history_index)
+        graph.metadata["score_breakdown"] = dict(preliminary_prediction.score_breakdown)
         if llm != "none" and sanitized_llm_proposal:
             graph.metadata["llm_proposal"] = sanitized_llm_proposal
             graph.metadata["llm_status"] = llm_result.get("status")
@@ -658,6 +777,8 @@ def run_nurse(
             graph.metadata["llm_candidate_count_used"] = len(sanitized_llm_proposal.get("candidates", [])) if isinstance(sanitized_llm_proposal, dict) else 0
             graph.metadata["llm_rank_repair_count"] = len(sanitized_llm_proposal.get("rank_repair", [])) if isinstance(sanitized_llm_proposal, dict) else 0
         prediction = ranker.rank(graph)
+        graph.metadata.pop("approved_history_index", None)
+        graph.metadata.pop("score_breakdown", None)
         rank_repair_result = None
         rank_repair_limits = rank_repair_limits_for(dataset, prompt_profile)
         if llm != "none" and mode.use_llm_rank_repair and isinstance(sanitized_llm_proposal, dict) and sanitized_llm_proposal.get("rank_repair"):
@@ -775,6 +896,16 @@ def run_nurse(
         prediction.metadata["llm_rank_mutation"] = False if not mode.use_llm_rank_repair else bool(
             rank_repair_result and rank_repair_result.verified_repairs
         )
+        history_index.append(
+            build_history_record(
+                case_id=incident.case_id,
+                dataset=dataset,
+                semantic_payload=semantic_rank_payload,
+                score_summary=prediction.scores,
+                score_breakdown=prediction.score_breakdown,
+                ranked_candidates=prediction.ranked,
+            )
+        )
         predictions[incident.case_id] = prediction.ranked
 
         (run_dir / "alarms" / f"{incident.case_id}.json").write_text(
@@ -822,6 +953,8 @@ def run_nurse(
             labels=labels,
             start_run=start_run,
             token_usage=token_usage,
+            candidate_expansion_rounds=candidate_expansion_rounds,
+            window_width_seconds=width_seconds,
         )
         if progress:
             print(
@@ -847,6 +980,8 @@ def run_nurse(
         labels=labels,
         start_run=start_run,
         token_usage=token_usage,
+        candidate_expansion_rounds=candidate_expansion_rounds,
+        window_width_seconds=width_seconds,
     )
     write_experiment_statistics(run_dir=run_dir, method="Nurse", dataset=dataset, llm=llm)
     if generate_doc:
@@ -876,6 +1011,9 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         seed=args.seed,
         case_manifest=args.case_manifest,
         case_ids_file=args.case_ids_file,
+        candidate_expansion_rounds=args.candidate_expansion_rounds,
+        window_width_seconds=args.window_width_seconds,
+        history_index_in=args.history_index_in,
     )
     print(f"[Nurse] Run directory: {run_dir}")
 

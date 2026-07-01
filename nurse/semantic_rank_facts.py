@@ -5,15 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
+from .llm_payload import semantic_rank_role_policy_for_dataset
 from .matching import canonical_entity
+from .llm_payload import semantic_role_for_service
 
 
 ALLOWED_FACT_TYPES = {
     "root_support",
     "source_support",
     "symptom_support",
-    "topology_support",
-    "semantic_prior",
 }
 
 
@@ -60,6 +60,40 @@ def _raw_items(proposal: Dict[str, Any]) -> Sequence[Dict[str, Any]]:
     return []
 
 
+def _normalize_fact_type(value: Any) -> str:
+    fact_type = str(value or "").strip().lower()
+    if not fact_type:
+        return ""
+    if fact_type in ALLOWED_FACT_TYPES:
+        return fact_type
+    if "symptom" in fact_type or "downstream" in fact_type:
+        return "symptom_support"
+    if "topology" in fact_type or "propagat" in fact_type or "dependency" in fact_type:
+        return "source_support"
+    if "root" in fact_type or "cause" in fact_type:
+        return "root_support"
+    if any(
+        keyword in fact_type
+        for keyword in (
+            "anomal",
+            "deviation",
+            "metric",
+            "resource",
+            "usage",
+            "utilization",
+            "performance",
+            "elevat",
+            "abnormal",
+            "cpu",
+            "memory",
+            "disk",
+            "fault_window",
+        )
+    ):
+        return "source_support"
+    return ""
+
+
 def _source_support_for(service: str, score_breakdown: Dict[str, Dict[str, float]]) -> float:
     parts = score_breakdown.get(service)
     if not isinstance(parts, dict):
@@ -70,12 +104,28 @@ def _source_support_for(service: str, score_breakdown: Dict[str, Dict[str, float
         return 0.0
 
 
+def _discouraged_fact_types_for_dataset(dataset: str) -> set[str]:
+    normalized = str(dataset or "").strip().lower()
+    if normalized == "aiops25-retained-nonnode":
+        return {
+            "root_support",
+            "source_support",
+        }
+    if normalized == "rcaeval-tt":
+        return {
+            "root_support",
+            "source_support",
+        }
+    return set()
+
+
 def normalize_and_guard_semantic_facts(
     *,
     proposal: Dict[str, Any],
     service_candidates: Iterable[str],
     verified_evidence_ids: Iterable[str],
     score_breakdown: Dict[str, Dict[str, float]] | None = None,
+    dataset: str = "",
 ) -> Tuple[List[GuardedSemanticFact], List[Dict[str, Any]]]:
     allowed_services = {
         canonical_entity(str(service))
@@ -84,6 +134,8 @@ def normalize_and_guard_semantic_facts(
     }
     verified_ids = {str(item) for item in verified_evidence_ids}
     score_breakdown = score_breakdown or {}
+    role_policy = semantic_rank_role_policy_for_dataset(dataset)
+    discouraged_fact_types = _discouraged_fact_types_for_dataset(dataset)
 
     accepted: List[GuardedSemanticFact] = []
     rejected: List[Dict[str, Any]] = []
@@ -97,7 +149,8 @@ def normalize_and_guard_semantic_facts(
                 or ""
             )
         )
-        fact_type = str(raw.get("fact_type") or raw.get("type") or raw.get("role") or "root_support").strip().lower()
+        raw_fact_type = str(raw.get("fact_type") or raw.get("type") or raw.get("role") or "root_support").strip().lower()
+        fact_type = _normalize_fact_type(raw_fact_type)
         evidence_ids = _ordered_unique(
             raw.get("supporting_evidence_ids")
             or raw.get("evidence_ids")
@@ -113,8 +166,19 @@ def normalize_and_guard_semantic_facts(
         if allowed_services and service not in allowed_services:
             rejected.append({"service": service, "reason": "outside_candidate_set"})
             continue
+        service_role = semantic_role_for_service(service, dataset)
+        if service_role in role_policy["discouraged_target_roles"] and fact_type in discouraged_fact_types:
+            rejected.append(
+                {
+                    "service": service,
+                    "reason": "discouraged_target_role",
+                    "semantic_role": service_role,
+                    "fact_type": fact_type,
+                }
+            )
+            continue
         if fact_type not in ALLOWED_FACT_TYPES:
-            rejected.append({"service": service, "reason": "unsupported_fact_type", "fact_type": fact_type})
+            rejected.append({"service": service, "reason": "unsupported_fact_type", "fact_type": raw_fact_type})
             continue
         if not evidence_ids:
             rejected.append({"service": service, "reason": "missing_supporting_evidence", "fact_type": fact_type})
@@ -148,6 +212,9 @@ def normalize_and_guard_semantic_facts(
         if fact_type == "symptom_support" and _source_support_for(service, score_breakdown) <= 0.0:
             rejected.append({"service": service, "reason": "symptom_only_without_source_support"})
             continue
+        if len(accepted) >= 3:
+            rejected.append({"service": service, "reason": "too_many_semantic_facts"})
+            continue
 
         accepted.append(
             GuardedSemanticFact(
@@ -165,10 +232,8 @@ def normalize_and_guard_semantic_facts(
 def semantic_fact_score(fact: GuardedSemanticFact, *, prior_weight: float = 1.0) -> float:
     fact_type_scale = {
         "root_support": 1.0,
-        "source_support": 1.0,
-        "topology_support": 0.75,
-        "symptom_support": 0.45,
-        "semantic_prior": 0.8,
+        "source_support": 0.85,
+        "symptom_support": 0.65,
     }.get(fact.fact_type, 1.0)
     evidence_bonus = 1.0 + min(max(len(fact.supporting_evidence_ids) - 1, 0), 2) * 0.05
     return max(float(prior_weight) * fact.confidence * fact_type_scale * evidence_bonus, 0.0)

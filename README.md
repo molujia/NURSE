@@ -1,56 +1,37 @@
 # NURSE
 
-**NURSE** is an LLM-enabled neural-symbolic agent for microservice root-cause localization (RCL). It turns incident telemetry into verified evidence, builds a typed evidence graph, ranks candidate root causes with an auditable Evidence Core, and then uses an LLM-facing User Manager to produce evidence paths and recovery advice under semantic guardrails.
+**NURSE** is an LLM-enabled neural-symbolic agent for microservice root-cause localization (RCL). It turns incident telemetry into verified evidence, builds a typed evidence graph, ranks candidate root causes with an auditable Evidence Core, and uses an LLM-facing User Manager to produce grounded evidence paths and recovery advice.
 
-NURSE is designed for SRE-facing RCA research: accuracy matters, but the system must also explain why a candidate is root-like rather than merely a propagated symptom.
+NURSE is built for SRE-facing RCA research. Accuracy matters, but the system must also explain why a candidate is root-like rather than only a propagated symptom.
 
 ## Highlights
 
-- **Agentic workflow**: an interactive CLI accepts natural-language SRE commands and records session memory.
-- **Neural-symbolic guardrails**: the LLM is bounded by Evidence Admission, a typed Evidence Graph, ESCPI scoring, and grounded output contracts.
-- **Auditable Evidence Core**: every ranked claim is tied to verified evidence, graph relations, score breakdowns, and provenance.
-- **Paper-style benchmarks**: the supported release datasets are AIOps25 retained non-node cases and RCAEval-TT.
-- **OpenAI-first quick start**: release examples use `gpt-5-nano` through the OpenAI-compatible API path.
-
-## Artifact Evaluation At A Glance
-
-This repository is intended to be usable as an ICSE-style research artifact. A reviewer should be able to inspect the implementation, install the dependencies, run lightweight contract tests, execute a smoke run, and reproduce paper-style runs when the public benchmark datasets and an LLM API key are available.
-
-For double-anonymous review, do not submit an author-identifying GitHub URL. Provide either an anonymous public mirror/archive of this repository or upload the artifact archive to HotCRP. After review, the public release can point to the de-anonymized GitHub repository and a persistent archive such as Zenodo or Software Heritage.
-
-Recommended reviewer path:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python -m pytest tests/test_nurse_agent_console.py tests/test_nurse_agent_session_memory.py tests/test_nurse_agent_tool_contracts.py -q --basetemp .pytest_tmp -p no:cacheprovider
-```
-
-See [`docs/ARTIFACT_EVALUATION.md`](docs/ARTIFACT_EVALUATION.md) for access instructions, expected resources, replication commands, and double-anonymous review notes.
+- **Evidence-first ranking**: candidates are scored through evidence support, propagation structure, history priors, and optional SRE rules.
+- **LLM under guardrails**: LLM calls can contribute admitted semantic facts before ranking, but the final rank is produced by NURSE rather than rewritten by the LLM after the fact.
+- **Auditable artifacts**: every run writes alarms, graphs, predictions, contexts, score breakdowns, LLM artifacts, and table-ready metrics.
+- **Paper-style benchmarks**: the public release workflow targets AIOps25 retained non-node cases and RCAEval TrainTicket cases.
+- **OpenAI-first release path**: quickstarts and smoke checks default to `gpt-5-nano`.
 
 ## Repository Layout
 
 ```text
 NURSE/
-  data/                   # Lightweight retained-case metadata and topology summaries
-  docs/                   # Artifact evaluation, repository layout, and release-audit notes
-  nurse/                  # Evidence Core: alarms, evidence admission, graph builder, ranker, runner
-  nurse_agent/            # Agent console, session memory, tool registry, report writer
-  nurse_agent/tools/      # Paper-facing tools called by the agent
-  scripts/                # Smoke and reproduction launchers
-  tests/                  # Unit, contract, and smoke tests
-  outputs/                # Generated locally; ignored by git
+  docs/                   Artifact evaluation, layout, release audit, smoke logs
+  nurse/                  Evidence Core: alarms, evidence admission, graph builder, ranker, runner
+  nurse_agent/            Agent console, session memory, tool registry, report writer
+  nurse_agent/tools/      Tools called by the agent workflow
+  scripts/                Smoke, connectivity, matrix, ablation, and aggregation launchers
+  tests/                  Unit, contract, and release-entrypoint tests
+  outputs/                Generated locally; ignored by git
 ```
 
-See [`docs/REPOSITORY_LAYOUT.md`](docs/REPOSITORY_LAYOUT.md) for a more detailed map.
+See [docs/REPOSITORY_LAYOUT.md](docs/REPOSITORY_LAYOUT.md) for a more detailed map.
 
 ## Installation
 
 NURSE is tested with Python 3.10+.
 
-### Windows PowerShell
+Windows PowerShell:
 
 ```powershell
 git clone <your-nurse-repository-url> NURSE
@@ -61,7 +42,7 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-### Linux / macOS
+Linux / macOS:
 
 ```bash
 git clone <your-nurse-repository-url> NURSE
@@ -72,9 +53,9 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-## Configure the LLM
+## Configure LLM Access
 
-Public NURSE runs require an LLM. The default release examples use an OpenAI-compatible GPT model.
+The public quickstarts use an OpenAI-compatible GPT model.
 
 PowerShell:
 
@@ -90,35 +71,24 @@ export OPENAI_API_KEY="your_api_key"
 export NURSE_OPENAI_MODEL="gpt-5-nano"
 ```
 
-Optional OpenAI-compatible endpoint override:
+Optional endpoint override:
 
 ```bash
 export NURSE_OPENAI_BASE_URL="https://api.openai.com/v1"
 ```
 
-Do not commit API keys, private endpoints, generated logs, or local absolute paths.
+Do not commit API keys, private endpoints, generated logs, local absolute paths, or benchmark answer keys.
 
 ## Datasets
 
-This artifact includes preprocessed retained-case metadata from two public benchmarks. The bundled JSON files are used only for experimental evaluation, smoke tests, retained-case manifests, and topology/candidate-scope checks. Full paper-style replication requires the original public benchmark releases. Please follow the original dataset release terms when using these benchmarks.
+This repository does not bundle raw benchmark data or benchmark-derived answer keys. Full replication requires the original public benchmark releases and their license terms.
 
-| ID | Dataset | Source |
+| Dataset ID | Benchmark | Expected Use |
 | --- | --- | --- |
-| `ds25` | AIOps-25 retained cases | [aiopschallenge2025 benchmark repository](https://www.aiops.cn/gitlab/aiops-live-benchmark/aiopschallenge2025) |
-| `tt` | TrainTicket retained cases | [RCAEval](https://github.com/phamquiluan/RCAEval) |
+| `aiops25-retained-nonnode` | AIOps25 | Retained non-node cases used by the paper workflow. |
+| `rcaeval-tt` | RCAEval TrainTicket | TrainTicket cases used by the paper workflow. |
 
-Bundled metadata files:
-
-| File | Contents |
-| --- | --- |
-| `data/ds25_faults.json` | 318 retained AIOps-25 non-node fault records. |
-| `data/ds25_topo_s2s.json` | AIOps-25 service-to-service topology summary. |
-| `data/tt_faults.json` | Retained TrainTicket fault metadata used by the public artifact. |
-| `data/tt_topo_s2s.json` | TrainTicket service-to-service topology summary. |
-
-### Local Benchmark Layout
-
-For reproducing full paper-style runs from the original benchmark releases, NURSE expects a workspace layout like this:
+Expected local layout:
 
 ```text
 <lab-root>/
@@ -130,30 +100,33 @@ For reproducing full paper-style runs from the original benchmark releases, NURS
       data/
 ```
 
-If your datasets live elsewhere, set `NURSE_LAB_ROOT` to the directory that contains `datasets/`:
-
-PowerShell:
+If datasets live elsewhere, set `NURSE_LAB_ROOT` to the directory that contains `datasets/`.
 
 ```powershell
 $env:NURSE_LAB_ROOT = "D:\research\microservice-rca"
 ```
 
-Linux / macOS:
-
 ```bash
 export NURSE_LAB_ROOT="/path/to/microservice-rca"
 ```
 
-Supported paper dataset IDs:
+## Quick Availability Check
 
-| Dataset ID | Description |
-| --- | --- |
-| `aiops25-retained-nonnode` | AIOps25 retained non-node subset used in the final paper experiments. |
-| `rcaeval-tt` | RCAEval TrainTicket cases. |
+This path does not require an API key.
 
-Legacy and diagnostic dataset IDs are still available in code, but the public paper workflow should use the two IDs above.
+```powershell
+python -m pytest `
+  tests\test_nurse_agent_console.py `
+  tests\test_nurse_agent_session_memory.py `
+  tests\test_nurse_agent_tool_contracts.py `
+  tests\test_nurse_sota_reporting.py `
+  tests\test_nurse_provider_routing.py `
+  -q --basetemp .pytest_tmp -p no:cacheprovider
+```
 
-## Quick Start: Agent Console
+Expected result: the selected tests pass.
+
+## Agent Console
 
 Start an interactive NURSE session:
 
@@ -161,7 +134,7 @@ Start an interactive NURSE session:
 python -m nurse_agent.console --output-root outputs\agent_runs --session-id demo
 ```
 
-Then type English SRE-style commands:
+Example commands:
 
 ```text
 NURSE> help
@@ -172,44 +145,21 @@ NURSE> memory
 NURSE> exit
 ```
 
-The two bundled single-case manifests are:
-
-| Command | Dataset |
-| --- | --- |
-| `Run single case 1.` | AIOps25 retained non-node demo case |
-| `Run single case 2.` | RCAEval-TT demo case |
-
-Each single-case report contains Top-K ranking, evidence paths, score breakdown, incident-prior status, recovery advice, and an agent trace.
-
-## Run Full NURSE Benchmarks
-
-The same console can launch full benchmark runs. Keep the same seed and dataset split when reproducing paper-style results.
-
-```text
-NURSE> Run the full AIOps25 benchmark with the default evidence backend.
-NURSE> Run the same configuration on RCAEval-TT.
-```
-
-For a one-shot scripted run:
+Dry-run smoke without LLM tokens:
 
 ```powershell
 python -m nurse_agent.console `
-  --script "Run the full RCAEval-TT benchmark with the default evidence backend." `
-  --output-root outputs\agent_runs
+  --script "Generate and use a sliding-window 3-sigma AD evidence tool for RCAEval-TT." `
+  --output-root outputs\agent_release_smoke `
+  --dry-run `
+  --allow-no-llm
 ```
 
-NURSE also supports alternative metric-evidence backends:
-
-```text
-NURSE> Run the full AIOps25 benchmark with AD reuse (alarm_fixed_window).
-NURSE> Generate and use a sliding-window 3-sigma AD evidence tool for RCAEval-TT.
-```
-
-Use `status`, `artifacts`, and `memory` inside the console to inspect progress and output paths.
+`--allow-no-llm` is for tests and dry-run artifact checks. Public usage should configure an LLM key.
 
 ## Direct Runner
 
-Researchers who prefer an explicit CLI can call the Evidence Core runner directly:
+Run one LLM-enabled case:
 
 ```powershell
 python -m nurse.runner `
@@ -220,111 +170,150 @@ python -m nurse.runner `
   --resume
 ```
 
-Run a GPT smoke test through the release script:
+Equivalent release smoke script:
 
 ```powershell
 .\scripts\run_nurse_gpt_smoke.ps1 -Dataset rcaeval-tt -CaseLimit 1
 ```
 
+## Release Experiment Entrypoints
+
+All commands below default to `gpt-5-nano` and are safe to run as smoke checks with `-CaseLimit 1` or `-SampleSize 1`. Set `-CaseLimit 0` only for full replication.
+
+Two-dataset full matrix smoke:
+
+```powershell
+.\scripts\run_nurse_openai_full.ps1 `
+  -Model gpt-5-nano `
+  -CaseLimit 1 `
+  -Workers 1
+```
+
+Full paper-style run:
+
+```powershell
+.\scripts\run_nurse_openai_full.ps1 `
+  -Model gpt-5-nano `
+  -CaseLimit 0 `
+  -Workers 2
+```
+
+Single-model consistency smoke:
+
+```powershell
+.\scripts\run_nurse_openai_consistency_5cases.ps1 `
+  -Models gpt-5-nano `
+  -SampleSize 1 `
+  -Workers 1
+```
+
+Internal SOTA full matrix smoke:
+
+```powershell
+.\scripts\run_nurse_sota_full_parallel.ps1 `
+  -Models gpt-5-nano `
+  -CaseLimit 1 `
+  -Workers 1
+```
+
+E/P/H ablation smoke:
+
+```powershell
+.\scripts\run_nurse_sota_ablation_parallel.ps1 `
+  -Models gpt-5-nano `
+  -CaseLimit 1 `
+  -Workers 1
+```
+
+Model consistency sample smoke:
+
+```powershell
+.\scripts\run_nurse_model_consistency_sample.ps1 `
+  -Models gpt-5-nano `
+  -SampleSize 1 `
+  -Workers 1
+```
+
+Aggregate an existing run root:
+
+```powershell
+python scripts\aggregate_nurse_sota_results.py aggregate `
+  --run-root outputs\experiments\nurse_sota_full_parallel\<timestamp> `
+  --output outputs\experiments\aggregated\sota_full.csv
+```
+
+## Connectivity Checks
+
+OpenAI-only:
+
+```powershell
+.\scripts\test_nurse_llm_connectivity.ps1 `
+  -Models gpt-5-nano `
+  -OpenAIModel gpt-5-nano
+```
+
+Provider routing for additional OpenAI-compatible models can be checked by passing `-Models ...` when the required provider keys are present.
+
 ## Output Files
 
-A NURSE run writes artifacts under `outputs/` unless you choose another output root.
+NURSE writes generated artifacts under `outputs/` unless you choose another output root.
 
 | File or directory | Meaning |
 | --- | --- |
 | `config.json` / `experiment_config.json` | Dataset, model, seed, evidence backend, and ranker configuration. |
 | `summary.json` | Run-level status, timing, token usage, and metrics. |
 | `paper_table_row.csv` | One-row Acc@1/3/5 summary for paper tables. |
-| `case_metrics.csv` | Per-case evaluation records when generated by statistics utilities. |
-| `records.jsonl` | Per-case inference status, timing, LLM usage, and evidence counts. |
-| `alarms/` | Shared alarm artifacts and incident windows. |
+| `case_metrics.csv` | Per-case evaluation records. |
+| `records.jsonl` | Per-case status, timing, LLM usage, and evidence counts. |
+| `alarms/` | Alarm artifacts and incident windows. |
 | `graphs/` | Evidence graphs consumed by the ranker. |
-| `predictions/` | Per-case ranked candidates and score breakdowns. |
-| `contexts/` | Verified RCL Context passed to the LLM User Manager. |
-| `llm_artifacts/` | Grounded LLM explanations, recovery advice, and usage metadata. |
+| `predictions/` | Ranked candidates and score breakdowns. |
+| `contexts/` | Verified RCL context passed to the LLM-facing path. |
+| `llm_artifacts/` | Grounded LLM semantic facts, explanations, and usage metadata. |
 | `agent_trace.json` | Agent planning and tool-call trace for console runs. |
 
 Inference artifacts must not contain benchmark labels or answer keys. Labels are loaded only by evaluation utilities after predictions are produced.
 
-## Reproduce Paper-Style Results
+## Development Tests
 
-For the release paper setting, use:
-
-- datasets: `aiops25-retained-nonnode`, `rcaeval-tt`
-- seed: `20260621`
-- LLM: `gpt-5-nano` or another OpenAI-compatible model configured through environment variables
-- metric backend: `evidence_robust` unless running a sensitivity experiment
-
-Example direct runner commands:
-
-```powershell
-python -m nurse.runner --dataset aiops25-retained-nonnode --case-limit 0 --llm gpt-5-nano --shuffle --seed 20260621 --run-dir outputs\nurse\paper_aiops25 --resume
-python -m nurse.runner --dataset rcaeval-tt --case-limit 0 --llm gpt-5-nano --shuffle --seed 20260621 --run-dir outputs\nurse\paper_tt --resume
-```
-
-After each run, inspect:
-
-```text
-outputs/nurse/paper_aiops25/paper_table_row.csv
-outputs/nurse/paper_tt/paper_table_row.csv
-```
-
-Some scripts under `scripts/` reproduce internal experiments or historical baselines. They are kept for auditability, but the recommended public quick start is the agent console or `python -m nurse.runner`.
-
-## Development and Tests
-
-Run focused tests for the public agent path:
+Focused release check:
 
 ```powershell
 python -m pytest `
   tests\test_nurse_agent_console.py `
   tests\test_nurse_agent_session_memory.py `
-  tests\test_nurse_agent_orchestrator.py `
-  tests\test_nurse_agent_core_wrappers.py `
   tests\test_nurse_agent_tool_contracts.py `
-  tests\test_nurse_context_packager.py `
+  tests\test_nurse_sota_reporting.py `
+  tests\test_nurse_release_scripts.py `
+  tests\test_nurse_aiops25_dataset_paths.py `
+  -q --basetemp .pytest_tmp -p no:cacheprovider
+```
+
+Broader focused suite:
+
+```powershell
+python -m pytest `
   tests\test_nurse_llm_bridge.py `
-  --basetemp .pytest_tmp `
-  -p no:cacheprovider `
-  -q
+  tests\test_nurse_llm_payload.py `
+  tests\test_nurse_semantic_rank_facts.py `
+  tests\test_nurse_ranker_ephr.py `
+  tests\test_nurse_sota_reporting.py `
+  tests\test_nurse_release_scripts.py `
+  -q --basetemp .pytest_tmp -p no:cacheprovider
 ```
 
-Run a dry-run smoke command without consuming LLM tokens:
-
-```powershell
-python -m nurse_agent.console `
-  --script "Generate and use a sliding-window 3-sigma AD evidence tool for RCAEval-TT." `
-  --output-root outputs\agent_release_smoke `
-  --dry-run `
-  --allow-no-llm
-```
-
-`--allow-no-llm` is an internal test flag. Public NURSE usage should configure `OPENAI_API_KEY` and run the LLM-enabled path.
-
-## Legacy NexusRCL Compatibility
-
-Older NexusRCL/CBSN entrypoints are preserved under `legacy/nexusrcl/` for reproducibility. They are not the public NURSE agent interface.
-
-```powershell
-python legacy\nexusrcl\main.py --help
-python main.py --legacy-nexusrcl -- --help
-```
-
-## Release Hygiene
+## Release Notes
 
 Before publishing or creating a supplementary artifact:
 
-1. Exclude `outputs/`, virtual environments, caches, local datasets, and private experiment logs.
-2. Do not publish API keys, private endpoints, local absolute paths, or human-participant identifiers.
-3. Do not include benchmark answer keys in inference prompts or artifacts.
-4. Keep generated evidence tools advisory until they pass schema, provenance, forbidden-field, and smoke checks.
-5. Review [`docs/release/RELEASE_AUDIT.md`](docs/release/RELEASE_AUDIT.md).
-6. For double-anonymous submission, use an anonymous repository/archive or HotCRP upload. Do not submit a URL that reveals author identity.
-7. For the public post-review release, archive an immutable snapshot and record the DOI or Software Heritage identifier in the paper.
+1. Exclude `outputs/`, `tmp/`, virtual environments, caches, local datasets, private experiment logs, and API keys.
+2. Keep benchmark data and answer keys outside the repository.
+3. Use [docs/release/RELEASE_AUDIT.md](docs/release/RELEASE_AUDIT.md) as the final checklist.
+4. See [docs/release/SMOKE_RESULTS.md](docs/release/SMOKE_RESULTS.md) for the latest local smoke validation log.
 
 ## License
 
-The NURSE implementation is released under the MIT License. The bundled benchmark-derived metadata remains subject to the original AIOps-25 and RCAEval release terms.
+The NURSE implementation is released under the MIT License. Benchmark data remains subject to the original AIOps25 and RCAEval release terms.
 
 ## Citation
 

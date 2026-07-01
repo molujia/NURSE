@@ -241,8 +241,16 @@ def fixed_window_metric_signals(
         if best_score > 0:
             selected = {best_key}
 
+    ordered_selected = sorted(
+        selected,
+        key=lambda item: (
+            -float(components[item].get("score", 0.0)),
+            item[0],
+            item[1],
+        ),
+    )
     signals: List[Dict[str, Union[str, float, bool]]] = []
-    for entity, metric in selected:
+    for entity, metric in ordered_selected:
         scores = components[(entity, metric)]
         signals.append(
             {
@@ -257,7 +265,8 @@ def fixed_window_metric_signals(
                 "filtered_by_iqr": (entity, metric) in selected,
             }
         )
-    signals.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
+    # Keep the final signal order deterministic when scores tie.
+    signals.sort(key=lambda item: (-float(item.get("score") or 0.0), str(item.get("entity") or ""), str(item.get("metric") or "")))
     return signals[: config.max_signals]
 
 

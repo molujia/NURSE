@@ -26,14 +26,24 @@ DEFAULT_DETECTOR_CONFIG = {
     "protocol": ALARM_PROTOCOL_VERSION,
     "fault_window_seconds": FAULT_WINDOW_SECONDS,
     "normal_window_seconds": NORMAL_WINDOW_SECONDS,
+    "window_width_seconds": FAULT_WINDOW_SECONDS,
     "baseline_points": 20,
     "threshold": 3.0,
     "window_radius": 60,
 }
 
 
-def alarm_cache_path(incident: RawIncident, repo_root: str | Path = REPO_ROOT) -> Path:
-    return Path(repo_root) / "outputs" / "nurse" / "alarms" / incident.dataset / f"{incident.case_id}.json"
+def alarm_cache_path(
+    incident: RawIncident,
+    repo_root: str | Path = REPO_ROOT,
+    *,
+    window_width_seconds: int = FAULT_WINDOW_SECONDS,
+) -> Path:
+    width = max(int(window_width_seconds), 1)
+    base = Path(repo_root) / "outputs" / "nurse" / "alarms" / incident.dataset
+    if width == FAULT_WINDOW_SECONDS:
+        return base / f"{incident.case_id}.json"
+    return base / f"w{width}" / f"{incident.case_id}.json"
 
 
 def _is_current_alarm(alarm: AlarmArtifact) -> bool:
@@ -168,18 +178,20 @@ def _benchmark_trigger(incident: RawIncident) -> tuple[Any, str] | None:
     return None
 
 
-def _benchmark_trigger_alarm(incident: RawIncident) -> Optional[AlarmArtifact]:
+def _benchmark_trigger_alarm(incident: RawIncident, *, window_width_seconds: int = FAULT_WINDOW_SECONDS) -> Optional[AlarmArtifact]:
     trigger = _benchmark_trigger(incident)
     if trigger is None:
         return None
     trigger_time, source = trigger
+    width_seconds = max(int(window_width_seconds), 1)
     window = {
-        "normal_start": _add_seconds(trigger_time, -NORMAL_WINDOW_SECONDS),
+        "normal_start": _add_seconds(trigger_time, -width_seconds),
         "normal_end": trigger_time,
         "start": trigger_time,
-        "end": _add_seconds(trigger_time, FAULT_WINDOW_SECONDS),
-        "normal_window_seconds": NORMAL_WINDOW_SECONDS,
-        "fault_window_seconds": FAULT_WINDOW_SECONDS,
+        "end": _add_seconds(trigger_time, width_seconds),
+        "normal_window_seconds": width_seconds,
+        "fault_window_seconds": width_seconds,
+        "window_width_seconds": width_seconds,
     }
 
     scale = _metric_time_scale(incident)
@@ -196,8 +208,8 @@ def _benchmark_trigger_alarm(incident: RawIncident) -> Optional[AlarmArtifact]:
             normal_start=float(metric_normal_start),
             normal_end=float(metric_normal_end),
             config=FixedWindowScoreConfig(
-                fault_window_seconds=FAULT_WINDOW_SECONDS,
-                normal_window_seconds=NORMAL_WINDOW_SECONDS,
+                fault_window_seconds=width_seconds,
+                normal_window_seconds=width_seconds,
             ),
         )
 
@@ -217,8 +229,9 @@ def _benchmark_trigger_alarm(incident: RawIncident) -> Optional[AlarmArtifact]:
         provenance={
             "source": source,
             "alarm_protocol": ALARM_PROTOCOL_VERSION,
-            "fault_window_seconds": FAULT_WINDOW_SECONDS,
-            "normal_window_seconds": NORMAL_WINDOW_SECONDS,
+            "fault_window_seconds": width_seconds,
+            "normal_window_seconds": width_seconds,
+            "window_width_seconds": width_seconds,
             "metric_scoring": "residual_shewhart_ks_iqr",
             "alert_entity_source": "raw_metric_iqr_score",
             "label_usage": "none; benchmark trigger only defines the shared RCL start boundary",
@@ -227,15 +240,23 @@ def _benchmark_trigger_alarm(incident: RawIncident) -> Optional[AlarmArtifact]:
     )
 
 
-def detect_alarm(incident: RawIncident) -> Optional[AlarmArtifact]:
-    benchmark_alarm = _benchmark_trigger_alarm(incident)
+def detect_alarm(
+    incident: RawIncident,
+    *,
+    window_width_seconds: int = FAULT_WINDOW_SECONDS,
+) -> Optional[AlarmArtifact]:
+    width_seconds = max(int(window_width_seconds), 1)
+    benchmark_alarm = _benchmark_trigger_alarm(incident, window_width_seconds=width_seconds)
     if benchmark_alarm is not None:
         return benchmark_alarm
 
+    detector_window_radius = int(DEFAULT_DETECTOR_CONFIG["window_radius"])
+    if width_seconds != FAULT_WINDOW_SECONDS:
+        detector_window_radius = max(1, width_seconds // 2)
     detector = RobustAlarmDetector(
         baseline_points=int(DEFAULT_DETECTOR_CONFIG["baseline_points"]),
         threshold=float(DEFAULT_DETECTOR_CONFIG["threshold"]),
-        window_radius=int(DEFAULT_DETECTOR_CONFIG["window_radius"]),
+        window_radius=detector_window_radius,
     )
     alarms: List[AlarmArtifact] = []
     for key, series in sorted(incident.metric_series.items()):
@@ -260,12 +281,17 @@ def get_or_create_alarm(
     *,
     repo_root: str | Path = REPO_ROOT,
     write_cache: bool = True,
+    window_width_seconds: int = FAULT_WINDOW_SECONDS,
 ) -> Optional[AlarmArtifact]:
-    path = alarm_cache_path(incident, repo_root)
+    path = alarm_cache_path(incident, repo_root, window_width_seconds=window_width_seconds)
     cached = _load_cached_alarm(path)
+    if cached is None and max(int(window_width_seconds), 1) == FAULT_WINDOW_SECONDS:
+        legacy_path = Path(repo_root) / "outputs" / "nurse" / "alarms" / incident.dataset / f"{incident.case_id}.json"
+        if legacy_path != path:
+            cached = _load_cached_alarm(legacy_path)
     if cached is not None:
         return cached
-    alarm = detect_alarm(incident)
+    alarm = detect_alarm(incident, window_width_seconds=window_width_seconds)
     if alarm is not None and write_cache:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(alarm.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")

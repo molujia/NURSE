@@ -47,7 +47,7 @@ def provider_for_model(model: str) -> LLMProviderConfig:
         return LLMProviderConfig(
             name="zhipu",
             model=str(model or "").strip(),
-            env_key="ZHIPU_API_KEY",
+            env_key="GLM_KEY",
             base_url=_env("NURSE_ZHIPU_BASE_URL") or DEFAULT_ZHIPU_BASE_URL,
             uses_openai_client=False,
         )

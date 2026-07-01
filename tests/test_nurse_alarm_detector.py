@@ -1,4 +1,8 @@
-﻿from nurse.alarm_detector import RobustAlarmDetector, detect_alarm_from_series
+from nurse.alarm_detector import (
+    RobustAlarmDetector,
+    detect_alarm_from_series,
+    fixed_window_metric_signals,
+)
 from nurse.raw_adapters import RawIncident
 from nurse.runner import _first_alarm
 
@@ -111,3 +115,36 @@ def test_incident_alarm_selection_uses_strongest_detected_signal():
     assert alarm.alert_entity == "zservice"
 
 
+def test_fixed_window_metric_signals_breaks_ties_deterministically():
+    series = [
+        (0, 1.0),
+        (1, 2.0),
+        (2, 1.0),
+        (3, 2.0),
+        (4, 1.0),
+        (5, 2.0),
+        (6, 1.0),
+        (7, 2.0),
+        (8, 1.0),
+        (9, 2.0),
+        (10, 50.0),
+        (11, 1.0),
+        (12, 60.0),
+    ]
+    metric_series = {
+        "bservice.cpu": series,
+        "aservice.cpu": list(series),
+    }
+
+    signals = fixed_window_metric_signals(
+        metric_series,
+        start=10,
+        end=12,
+        normal_start=0,
+        normal_end=10,
+    )
+
+    assert [(signal["entity"], signal["metric"]) for signal in signals[:2]] == [
+        ("aservice", "cpu"),
+        ("bservice", "cpu"),
+    ]
