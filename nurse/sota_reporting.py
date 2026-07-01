@@ -1,4 +1,4 @@
-"""Experiment sampling and aggregation helpers for NURSE release runs."""
+"""Sampling and matrix helpers for NURSE release runs."""
 
 from __future__ import annotations
 
@@ -20,7 +20,14 @@ from .case_order import write_case_order_manifest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LAB_ROOT = Path(os.environ.get("NURSE_LAB_ROOT", REPO_ROOT.parent)).expanduser().resolve()
 DEFAULT_SAMPLE_MODELS = [
+    "ep-20260623103508-6dkw6",
+    "Doubao-Seed-2.1-pro",
+    "ep-20260623160517-ckhj8",
+    "glm-4.5-air",
+    "glm-4.6v",
     "gpt-5-nano",
+    "gpt-5-mini",
+    "gpt-5",
 ]
 DEFAULT_SAMPLE_DATASETS = ["aiops25-retained-nonnode", "rcaeval-tt"]
 
@@ -608,64 +615,6 @@ def run_matrix_experiment(
     return matrix_report
 
 
-def _aggregate_run_rows(run_root: Path) -> Dict[str, Any]:
-    rows: list[Dict[str, Any]] = []
-    top5_hashes: Dict[str, Dict[str, Any]] = {}
-    for summary_path in sorted(run_root.rglob("summary.json")):
-        run_dir = summary_path.parent
-        if not (run_dir / "predictions.json").exists():
-            continue
-        snapshot = load_run_snapshot(run_dir)
-        summary = snapshot["summary"]
-        metrics = _summary_metrics(summary, snapshot["predictions"])
-        row = {
-            "dataset": str(summary.get("dataset", "")),
-            "llm": str(summary.get("llm", "")),
-            "method": str(summary.get("method", "Nurse")),
-            "run_dir": str(run_dir.relative_to(run_root)),
-            **metrics,
-            "top5_hash": snapshot["top5_hash"],
-        }
-        rows.append(row)
-        top5_hashes[str(run_dir.relative_to(run_root))] = {
-            "dataset": row["dataset"],
-            "llm": row["llm"],
-            "top5_hash": snapshot["top5_hash"],
-            "cases": metrics["cases"],
-        }
-    rows.sort(key=lambda row: (row["dataset"], row["llm"], row["run_dir"]))
-    return {"rows": rows, "top5_hashes": top5_hashes}
-
-
-def aggregate_run_root(run_root: str | Path, output_path: str | Path) -> Dict[str, Any]:
-    root = Path(run_root)
-    output = Path(output_path)
-    report = _aggregate_run_rows(root)
-    rows = report["rows"]
-    top5_hashes = report["top5_hashes"]
-    output.parent.mkdir(parents=True, exist_ok=True)
-    if output.suffix.lower() == ".xlsx":
-        csv_path = output.with_suffix(".csv")
-        xlsx_path = output
-    else:
-        csv_path = output
-        xlsx_path = output.with_suffix(".xlsx")
-    pd.DataFrame(rows).to_csv(csv_path, index=False)
-    with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
-        pd.DataFrame(rows).to_excel(writer, index=False, sheet_name="runs")
-        pd.DataFrame(
-            [
-                {"run_dir": key, **value}
-                for key, value in sorted(top5_hashes.items(), key=lambda item: item[0])
-            ]
-        ).to_excel(writer, index=False, sheet_name="top5_hashes")
-    _write_json(root / "top5_hashes.json", top5_hashes)
-    report["csv_path"] = str(csv_path)
-    report["xlsx_path"] = str(xlsx_path)
-    report["top5_hashes_json"] = str(root / "top5_hashes.json")
-    return report
-
-
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="NURSE experiment reporting helpers")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -682,10 +631,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     sample.add_argument("--output-root", default=str(REPO_ROOT / "outputs" / "experiments" / "nurse_model_consistency_sample"))
     sample.add_argument("--lab-root", default=str(DEFAULT_LAB_ROOT))
     sample.add_argument("--python", default="python")
-
-    aggregate = subparsers.add_parser("aggregate", help="Aggregate experiment run roots")
-    aggregate.add_argument("--run-root", required=True)
-    aggregate.add_argument("--output", required=True)
 
     matrix = subparsers.add_parser("matrix", help="Run a model/dataset matrix of experiment jobs")
     matrix.add_argument("--datasets", nargs="+", default=DEFAULT_SAMPLE_DATASETS)
@@ -721,10 +666,6 @@ def main(argv: Sequence[str] | None = None) -> None:
             python_exe=args.python,
             lab_root=args.lab_root,
         )
-        return
-    if args.command == "aggregate":
-        report = aggregate_run_root(run_root=args.run_root, output_path=args.output)
-        print(json.dumps(report, ensure_ascii=False, indent=2, default=_json_default))
         return
     if args.command == "matrix":
         report = run_matrix_experiment(

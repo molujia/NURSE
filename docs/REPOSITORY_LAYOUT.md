@@ -7,13 +7,12 @@ NURSE/
     REPOSITORY_LAYOUT.md      This file.
     release/
       RELEASE_AUDIT.md        Release and anonymity checklist.
-      SMOKE_RESULTS.md        Latest local smoke validation summary.
   nurse/
     alarm_*.py                Alarm artifact construction and detection.
     evidence_*.py             Evidence admission, graph building, and ranking.
     runner.py                 Direct Evidence Core runner.
     schemas.py                Typed artifact schemas.
-    sota_reporting.py         Matrix, consistency, and aggregation helpers.
+    sota_reporting.py         Reporting helper used by the basic OpenAI scripts.
   nurse_agent/
     console.py                Interactive and scripted agent console.
     orchestrator.py           Agent planning and approved tool orchestration.
@@ -23,10 +22,6 @@ NURSE/
     run_nurse_gpt_smoke.ps1
     run_nurse_openai_full.ps1
     run_nurse_openai_consistency_5cases.ps1
-    run_nurse_model_consistency_sample.ps1
-    run_nurse_sota_full_parallel.ps1
-    run_nurse_sota_ablation_parallel.ps1
-    aggregate_nurse_sota_results.py
     test_nurse_llm_connectivity.ps1
     test_nurse_all_llm_providers.ps1
   tests/

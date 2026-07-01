@@ -7,7 +7,7 @@ This document is written for ICSE-style artifact availability and verifiability 
 Use the following text after replacing the placeholder with the anonymous artifact URL or HotCRP upload reference:
 
 ```text
-The artifact is available as an anonymous review archive at <ANONYMOUS_ARTIFACT_URL_OR_HOTCRP_UPLOAD>. It contains the NURSE implementation, sample-case manifests, tests, scripts, and documentation needed to inspect and independently run the claimed workflow. Reviewers can download or clone the archive, install Python dependencies from requirements.txt, run contract tests, and execute smoke runs without author-private resources. Full benchmark replication requires the public AIOps25 and RCAEval benchmark releases and an OpenAI-compatible LLM API key. The artifact documentation explains dataset placement, expected output files, and privacy restrictions. The public de-anonymized repository and persistent archive DOI will be provided after the double-anonymous review period.
+The artifact is available as an anonymous review archive at <ANONYMOUS_ARTIFACT_URL_OR_HOTCRP_UPLOAD>. It contains the NURSE implementation, sample-case manifests, tests, scripts, and documentation needed to inspect and independently run the basic NURSE workflow. Reviewers can download or clone the archive, install Python dependencies from requirements.txt, run contract tests, and execute smoke runs without author-private resources. Full benchmark replication requires the public AIOps25 and RCAEval benchmark releases and an OpenAI-compatible LLM API key. The artifact documentation explains dataset placement, expected output files, and privacy restrictions. The public de-anonymized repository and persistent archive DOI will be provided after the double-anonymous review period.
 ```
 
 Do not submit an author-owned GitHub URL during double-anonymous review if the URL reveals identity.
@@ -18,10 +18,10 @@ The artifact contains:
 
 - the NURSE Evidence Core under `nurse/`;
 - the interactive agent interface under `nurse_agent/`;
-- smoke, connectivity, matrix, ablation, and aggregation scripts under `scripts/`;
+- basic smoke, connectivity, and reproduction scripts under `scripts/`;
 - unit, contract, and smoke tests under `tests/`;
 - documentation under `docs/`;
-- a README with installation, dataset, LLM, quickstart, and reproduction instructions.
+- a README with installation, dataset, LLM, quickstart, and replication instructions.
 
 The artifact intentionally excludes:
 
@@ -38,7 +38,7 @@ The artifact intentionally excludes:
 - network access for dependency installation and LLM calls;
 - an OpenAI-compatible API key for LLM-enabled runs.
 
-The artifact can still be inspected and tested without an LLM key through the dry-run and contract-test paths.
+The artifact can still be inspected and tested without an LLM key through dry-run and contract-test paths.
 
 ## Quick Availability Check
 
@@ -49,7 +49,7 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-python -m pytest tests/test_nurse_agent_console.py tests/test_nurse_agent_session_memory.py tests/test_nurse_agent_tool_contracts.py tests/test_nurse_sota_reporting.py tests/test_nurse_provider_routing.py -q --basetemp .pytest_tmp -p no:cacheprovider
+python -m pytest tests/test_nurse_agent_console.py tests/test_nurse_agent_session_memory.py tests/test_nurse_agent_tool_contracts.py tests/test_nurse_provider_routing.py tests/test_nurse_release_scripts.py tests/test_nurse_aiops25_dataset_paths.py -q --basetemp .pytest_tmp -p no:cacheprovider
 ```
 
 On Windows PowerShell:
@@ -59,7 +59,7 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-python -m pytest tests\test_nurse_agent_console.py tests\test_nurse_agent_session_memory.py tests\test_nurse_agent_tool_contracts.py tests\test_nurse_sota_reporting.py tests\test_nurse_provider_routing.py -q --basetemp .pytest_tmp -p no:cacheprovider
+python -m pytest tests\test_nurse_agent_console.py tests\test_nurse_agent_session_memory.py tests\test_nurse_agent_tool_contracts.py tests\test_nurse_provider_routing.py tests\test_nurse_release_scripts.py tests\test_nurse_aiops25_dataset_paths.py -q --basetemp .pytest_tmp -p no:cacheprovider
 ```
 
 Expected outcome: the selected tests pass and no API key is required.
@@ -88,19 +88,15 @@ python -m nurse.runner --dataset rcaeval-tt --case-limit 1 --llm gpt-5-nano --ru
 
 Expected output files include `summary.json`, `paper_table_row.csv`, `records.jsonl`, alarms, graphs, predictions, contexts, and LLM artifacts.
 
-## Release Experiment Smoke Commands
+## Basic Reproduction Commands
 
-The following commands use `gpt-5-nano` and small samples. They test the old public NURSE experiment entrypoints without running the full benchmark.
+The following commands use small samples by default and can be scaled to the retained benchmark datasets by setting `-CaseLimit 0`.
 
 ```powershell
+.\scripts\run_nurse_gpt_smoke.ps1 -Dataset rcaeval-tt -CaseLimit 1
 .\scripts\run_nurse_openai_full.ps1 -Model gpt-5-nano -CaseLimit 1 -Workers 1
-.\scripts\run_nurse_openai_consistency_5cases.ps1 -Models gpt-5-nano -SampleSize 1 -Workers 1
-.\scripts\run_nurse_model_consistency_sample.ps1 -Models gpt-5-nano -SampleSize 1 -Workers 1
-.\scripts\run_nurse_sota_full_parallel.ps1 -Models gpt-5-nano -CaseLimit 1 -Workers 1
-.\scripts\run_nurse_sota_ablation_parallel.ps1 -Models gpt-5-nano -CaseLimit 1 -Workers 1
+.\scripts\run_nurse_openai_consistency_5cases.ps1 -SampleSize 5 -Workers 3
 ```
-
-Set `-CaseLimit 0` only for full retained-dataset replication.
 
 ## Full Benchmark Replication
 
@@ -154,7 +150,7 @@ Reviewers can check the following without private materials:
 
 - no required private endpoint or hard-coded API key is committed;
 - README explains installation, datasets, LLM configuration, smoke runs, output files, and full replication;
-- tests cover the agent console, session memory, tool contracts, LLM bridge, release scripts, and reporting helpers;
+- tests cover the agent console, session memory, tool contracts, LLM bridge, release scripts, and provider routing;
 - inference artifacts are written under ignored output directories;
 - benchmark labels are loaded only for evaluation after predictions are produced;
 - generated outputs, local datasets, and temp files are excluded from release archives.
