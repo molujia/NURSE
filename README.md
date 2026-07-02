@@ -1,15 +1,14 @@
 # NURSE
 
-**NURSE** is an LLM-enabled neural-symbolic agent for microservice root-cause localization (RCL). It turns incident telemetry into verified evidence, builds a typed evidence graph, ranks candidate root causes with an auditable Evidence Core, and uses an LLM-facing User Manager to produce grounded evidence paths and recovery advice.
+**NURSE** is an LLM-enabled neural-symbolic agent for microservice root-cause localization (RCL). It turns incident telemetry into verified evidence with customizable toolkits, builds a typed evidence graph, ranks candidate root causes with an auditable Evidence Core, and uses an LLM-facing User Manager to produce grounded evidence paths and recovery advice.
 
 This public repository focuses on the basic NURSE workflow: install the code, place the benchmark datasets, configure an OpenAI-compatible LLM, run NURSE, and inspect the generated artifacts.
 
 ## Highlights
 
-- **Agentic workflow**: an interactive CLI accepts natural-language SRE commands and records session memory.
+- **Agentic workflow**: an interactive CLI accepts natural-language SRE commands and records session memory. 
 - **Neural-symbolic guardrails**: LLM outputs are admitted only through evidence and schema checks before they can support ranking.
-- **Auditable Evidence Core**: ranked claims are tied to verified evidence, graph relations, score breakdowns, and provenance.
-- **Public benchmark workflow**: release commands target AIOps25 retained non-node cases and RCAEval-TT.
+- **Auditable Evidence Core**: ranked claims are tied to verified evidence, graph relations, and score breakdowns.
 - **OpenAI-first quick start**: scripts support a full two-dataset run and a small GPT model-switch consistency check.
 
 ## Repository Layout
@@ -17,7 +16,7 @@ This public repository focuses on the basic NURSE workflow: install the code, pl
 ```text
 NURSE/
   docs/                   # Artifact and repository notes
-  nurse/                  # Evidence Core: alarms, evidence admission, graph builder, ranker, runner
+  nurse/                  # Evidence Core: alarms context adapter, evidence initializer, candidate builder, evidence ranker
   nurse_agent/            # Agent console, session memory, tool registry, report writer
   nurse_agent/tools/      # Tools called by the agent workflow
   scripts/                # Basic smoke, connectivity, and reproduction launchers
