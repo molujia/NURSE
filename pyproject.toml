@@ -1,0 +1,66 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nurse-rcl"
+version = "0.1.0"
+description = "Evidence-grounded, agent-assisted root-cause localization"
+readme = "docs/README.md"
+requires-python = ">=3.10,<3.13"
+license = { file = "LICENSE" }
+dependencies = [
+  "httpx==0.28.1",
+  "networkx==3.4.2",
+  "numpy==2.2.6",
+  "pandas==2.3.1",
+  "pyarrow==20.0.0",
+  "pydantic==2.11.7",
+  "pyyaml==6.0.2",
+  "scipy==1.15.3",
+  "tqdm==4.67.1",
+  "typing-extensions==4.14.1",
+]
+
+[project.scripts]
+nurse-launch-preflight = "nurse_rcl.experiment.launcher:main"
+nurse-ops = "nurse_rcl.operations:main"
+nurse-status = "nurse_rcl.experiment.status:main"
+
+[project.optional-dependencies]
+experiment = [
+  "sentence-transformers==5.1.0",
+]
+test = [
+  "hypothesis==6.135.26",
+  "mypy==1.16.1",
+  "pytest==8.4.1",
+  "pytest-cov==6.2.1",
+  "ruff==0.12.2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nurse_rcl", "third_party/hermes_runtime/hermes_runtime"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+testpaths = ["tests"]
+pythonpath = ["src", "third_party/hermes_runtime"]
+
+[tool.coverage.run]
+branch = true
+source = ["nurse_rcl"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = ["tests/.pytest_tmp_*"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+mypy_path = "src,third_party/hermes_runtime"
+packages = ["nurse_rcl", "hermes_runtime"]

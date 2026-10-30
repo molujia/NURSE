@@ -1,0 +1,181 @@
+{
+  "schema_version": "nurse.v2.a1-narrow-audit/1",
+  "from_variant": "A0",
+  "to_variant": "A1",
+  "a0_manifest_path": "configs/v2/a0_frozen_manifest.json",
+  "a0_manifest_sha256": "b889aac7731ceab2156775e94b71f5d1d7301de1dcee86740458846e4ca196e5",
+  "experiment_registry_path": "configs/v2/experiment_versions.json",
+  "experiment_registry_version": "v2.1-reference-1",
+  "changed_files": [
+    {
+      "path": "src/nurse_rcl/v2/paper_v1_repaired/__init__.py",
+      "content_sha256": "667e0d69297ccdcf211cd26c19d6a1d558d9d214e613e25be5b678e801a4098b",
+      "allowed_changes": [
+        "candidate_fallback",
+        "entity_binding",
+        "topology_missing_detection"
+      ]
+    },
+    {
+      "path": "src/nurse_rcl/v2/paper_v1_repaired/candidates.py",
+      "content_sha256": "c910338140e40f76f175e8d95a3f1b71f6645120a5284617c2473d9874c5e7b7",
+      "allowed_changes": [
+        "candidate_fallback",
+        "entity_binding",
+        "topology_missing_detection"
+      ]
+    }
+  ],
+  "configuration_field_changes": [
+    {
+      "field": "allowed_changes",
+      "before": [],
+      "after": [
+        "candidate_fallback",
+        "entity_binding",
+        "topology_missing_detection"
+      ],
+      "classification": "candidate_path_repair"
+    },
+    {
+      "field": "derived_from",
+      "before": null,
+      "after": "A0",
+      "classification": "lineage_metadata"
+    },
+    {
+      "field": "id",
+      "before": "A0",
+      "after": "A1",
+      "classification": "identity_metadata"
+    },
+    {
+      "field": "immutable_manifest",
+      "before": "configs/v2/a0_frozen_manifest.json",
+      "after": null,
+      "classification": "lineage_metadata"
+    },
+    {
+      "field": "implementation_version",
+      "before": "paper-v1-frozen-20260905",
+      "after": "v1-repaired-v1",
+      "classification": "identity_metadata"
+    },
+    {
+      "field": "kind",
+      "before": "historical_baseline",
+      "after": "repair_baseline",
+      "classification": "identity_metadata"
+    },
+    {
+      "field": "localization_pipeline",
+      "before": "paper_v1_frozen",
+      "after": "paper_v1_repaired",
+      "classification": "candidate_path_repair"
+    },
+    {
+      "field": "method_namespace",
+      "before": "v1",
+      "after": "v2",
+      "classification": "identity_metadata"
+    },
+    {
+      "field": "name",
+      "before": "V1-frozen",
+      "after": "V1-repaired",
+      "classification": "identity_metadata"
+    },
+    {
+      "field": "status",
+      "before": "frozen",
+      "after": "planned",
+      "classification": "identity_metadata"
+    }
+  ],
+  "shared_configuration_fields": [
+    {
+      "field": "ablation_of",
+      "value": null
+    },
+    {
+      "field": "credential_requirement",
+      "value": "ark_api_key2"
+    },
+    {
+      "field": "disabled_modules",
+      "value": []
+    },
+    {
+      "field": "ranking_equivalent_to",
+      "value": null
+    },
+    {
+      "field": "report_pipeline",
+      "value": "paper_v1_user_manager"
+    },
+    {
+      "field": "semantic_stage",
+      "value": "pre_ranking"
+    }
+  ],
+  "protected_a0_groups": [
+    {
+      "name": "configuration",
+      "file_count": 4,
+      "tree_sha256": "8a3ae0626e96867c2f59f4bd56815193b8358293030875cdfed5a057865ef026"
+    },
+    {
+      "name": "environment",
+      "file_count": 21,
+      "tree_sha256": "28126b565480aefe1287fee51c1a570308c2dcbfc24d07eb65cee1e11d7e70fc"
+    },
+    {
+      "name": "prompts",
+      "file_count": 8,
+      "tree_sha256": "1a8c3a874c3af9bd423eb2341d8375a9a08b6fbff8cfc80cf1a5de2b65195610"
+    },
+    {
+      "name": "source",
+      "file_count": 56,
+      "tree_sha256": "88f39eef5511d024b6faf4b73aa0f1165feb657ac559cfcd299bd104e1b41d3c"
+    }
+  ],
+  "unchanged_contracts": [
+    {
+      "contract": "detectors",
+      "anchors": [
+        "a0_group:source"
+      ]
+    },
+    {
+      "contract": "formulas",
+      "anchors": [
+        "a0_group:source"
+      ]
+    },
+    {
+      "contract": "prompts",
+      "anchors": [
+        "a0_group:prompts"
+      ]
+    },
+    {
+      "contract": "semantic_behavior",
+      "anchors": [
+        "a0_group:prompts",
+        "a0_group:source",
+        "shared_config:credential_requirement",
+        "shared_config:report_pipeline",
+        "shared_config:semantic_stage"
+      ]
+    },
+    {
+      "contract": "weights",
+      "anchors": [
+        "a0_group:configuration",
+        "a0_group:source"
+      ]
+    }
+  ],
+  "audit_sha256": "e1ee00aa58d1b3f8457a77f161840ee99663c58b0e30ea3f141827d782546730"
+}

@@ -1,0 +1,75 @@
+{
+  "schema_version": "nurse.v2.frozen-snapshot/1",
+  "hash_mode": "sha256-utf8-lf-path-bound-v1",
+  "baseline": {
+    "id": "A0",
+    "name": "V1-frozen",
+    "upstream_branch": "feature/paper-v1-nurse-rcl",
+    "upstream_commit": "465b10ea1d31841991bace609dda4c8720ed955f",
+    "baseline_test_count": 429
+  },
+  "snapshot_provenance": {
+    "working_snapshot_files_imported": 24,
+    "working_snapshot_test_result": "429 passed",
+    "working_snapshot_test_date": "2026-09-05",
+    "note": "The imported working snapshot contains the approved Flash model boundary and durable five-attempt recovery hardening that were not committed on the upstream branch."
+  },
+  "groups": {
+    "configuration": {
+      "includes": [
+        "configs/v1/*.yaml",
+        "configs/v1/*.md"
+      ],
+      "excludes": [],
+      "file_count": 4,
+      "tree_sha256": "8a3ae0626e96867c2f59f4bd56815193b8358293030875cdfed5a057865ef026"
+    },
+    "environment": {
+      "includes": [
+        ".python-version",
+        "pyproject.toml",
+        "uv.lock",
+        "third_party/hermes_runtime/*.md",
+        "third_party/hermes_runtime/*.json",
+        "third_party/hermes_runtime/LICENSE",
+        "third_party/hermes_runtime/hermes_runtime/*.py"
+      ],
+      "excludes": [],
+      "file_count": 21,
+      "tree_sha256": "28126b565480aefe1287fee51c1a570308c2dcbfc24d07eb65cee1e11d7e70fc"
+    },
+    "prompts": {
+      "includes": [
+        "src/nurse_rcl/agents/*.py"
+      ],
+      "excludes": [],
+      "file_count": 8,
+      "tree_sha256": "1a8c3a874c3af9bd423eb2341d8375a9a08b6fbff8cfc80cf1a5de2b65195610"
+    },
+    "source": {
+      "includes": [
+        "src/nurse_rcl/**/*.py"
+      ],
+      "excludes": [
+        "src/nurse_rcl/versioning.py",
+        "src/nurse_rcl/v2/**"
+      ],
+      "file_count": 56,
+      "tree_sha256": "88f39eef5511d024b6faf4b73aa0f1165feb657ac559cfcd299bd104e1b41d3c"
+    }
+  },
+  "protected_namespaces": [
+    "configs/v1",
+    "src/nurse_rcl/agents",
+    "src/nurse_rcl/datasets",
+    "src/nurse_rcl/evaluation",
+    "src/nurse_rcl/experiment",
+    "src/nurse_rcl/methods/paper_v1",
+    "src/nurse_rcl/models",
+    "third_party/hermes_runtime"
+  ],
+  "v2_extension_namespaces": [
+    "configs/v2",
+    "src/nurse_rcl/v2"
+  ]
+}

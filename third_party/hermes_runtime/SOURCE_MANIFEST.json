@@ -1,0 +1,251 @@
+{
+  "upstream": {
+    "name": "HERMES Agent",
+    "repository": "https://github.com/nousresearch/hermes-agent",
+    "version": "0.20.5",
+    "commit": "8c8193dce5faf71d80bf98eb52bd896ee7be8a27",
+    "license": "MIT",
+    "upstream_license_sha256": "e29dfaf6905a8d396a58ea4bd84ad27057756bbd9599b5bec0971ae34d2a2118",
+    "vendored_license_sha256": "821556e6336796450ab852d375117b48a4887e71d255794fd6318d99982a5ab6",
+    "vendored_license_note": "The vendored license is text-identical to upstream after CRLF-to-LF normalization. Both byte-level hashes are recorded explicitly."
+  },
+  "selection_status": "approved_runtime_components_vendored",
+  "inventory_verified_on": "2026-09-01",
+  "selection_policy": "Extract and adapt only the named symbols; do not copy whole upstream modules unless every symbol is required.",
+  "approved_source_inventory": [
+    {
+      "source_path": "agent/transports/types.py",
+      "sha256": "148b1f6389d10952a70da2a79c7a6baf056f7a41178b9b5e0b673626dad2fa2b",
+      "selected_symbols": [
+        "ToolCall",
+        "Usage",
+        "NormalizedResponse",
+        "build_tool_call",
+        "map_finish_reason"
+      ],
+      "purpose": "Minimal normalized message, tool-call, response, and usage contracts.",
+      "adaptation_boundary": "Remove properties and metadata for Anthropic, Codex, and other unrelated transports."
+    },
+    {
+      "source_path": "agent/transports/base.py",
+      "sha256": "e9b0d020f9cf1aae5d0a470363c7694cb3f3f0257fbeff00fc80435e9b80befe",
+      "selected_symbols": [
+        "ProviderTransport"
+      ],
+      "purpose": "Abstract request conversion and response normalization contract.",
+      "adaptation_boundary": "Retain only the interface required by the one explicit OpenAI-compatible transport."
+    },
+    {
+      "source_path": "agent/transports/chat_completions.py",
+      "sha256": "121313b8edc0bb395b9a5d60231abb1eab9d208649a17b2821ce748554017b92",
+      "selected_symbols": [
+        "ChatCompletionsTransport.convert_messages",
+        "ChatCompletionsTransport.convert_tools",
+        "ChatCompletionsTransport.build_kwargs",
+        "ChatCompletionsTransport.normalize_response",
+        "ChatCompletionsTransport.validate_response"
+      ],
+      "purpose": "OpenAI-compatible chat-completions request construction and normalized response parsing.",
+      "adaptation_boundary": "Remove Gemini, OpenRouter, provider-profile, prompt-cache, reasoning-family, and automatic compatibility branches."
+    },
+    {
+      "source_path": "agent/message_sanitization.py",
+      "sha256": "477b947e8c032450cb8e504ca15106d979bc4b88ca3aa3f17a5b525f6dddacf0",
+      "selected_symbols": [
+        "_escape_invalid_chars_in_json_strings",
+        "_repair_tool_call_arguments",
+        "deterministic_call_id",
+        "uniquify_tool_call_ids"
+      ],
+      "purpose": "Deterministic malformed tool-argument repair and stable tool-call identifiers.",
+      "adaptation_boundary": "Exclude image stripping, provider-specific reasoning echo, and broad message rewriting."
+    },
+    {
+      "source_path": "agent/conversation_loop.py",
+      "sha256": "8ea02d396288812514a664a34bad8944c3f573087293e365cd72e6ad9f744d92",
+      "selected_symbols": [
+        "run_conversation"
+      ],
+      "purpose": "Reference control flow for a single-model assistant/tool-result loop.",
+      "adaptation_boundary": "Reimplement the narrow loop without provider fallback, credential refresh, compression, MoA, delegation, TUI, hooks, or billing branches."
+    },
+    {
+      "source_path": "agent/tool_dispatch_helpers.py",
+      "sha256": "8514bb388f781453d2ed2405b1500dc1946396fcfb585ced5f36f761714cfc31",
+      "selected_symbols": [
+        "make_tool_result_message"
+      ],
+      "purpose": "Canonical assistant-facing tool-result message construction.",
+      "adaptation_boundary": "Exclude shell/file mutation handling, generic parallel dispatch, MCP policy, multimodal results, and untrusted-output wrapping."
+    },
+    {
+      "source_path": "agent/retry_utils.py",
+      "sha256": "9501b937326f497eaa0c3bebd5db3f410e060ad0a3254f351df05f733416f31b",
+      "selected_symbols": [
+        "parse_retry_after_seconds"
+      ],
+      "purpose": "Parse bounded Retry-After delays for the fixed five-attempt policy.",
+      "adaptation_boundary": "Exclude jitter, provider-specific overload detection, and adaptive unbounded retry policy."
+    },
+    {
+      "source_path": "agent/bounded_response.py",
+      "sha256": "d237945a88d611a78b37efb4c8a17b49fda192a4274a626c4f0b060fb82fc60b",
+      "selected_symbols": [
+        "read_streaming_error_body",
+        "read_error_body_or_default"
+      ],
+      "purpose": "Bound error-body reads before redacted provider diagnostics are recorded.",
+      "adaptation_boundary": "Keep bounded reads and safe closure only; no general HTTP client behavior."
+    },
+    {
+      "source_path": "agent/errors.py",
+      "sha256": "237581ac4180cffe9a5d0b4886cb865aba6eb3d2328ff1bb918987727670a0bb",
+      "selected_symbols": [
+        "EmptyStreamError"
+      ],
+      "purpose": "Narrow empty-provider-response failure contract.",
+      "adaptation_boundary": "Exclude unrelated SSL and mixture-of-agents error types."
+    },
+    {
+      "source_path": "agent/usage_pricing.py",
+      "sha256": "08e7be62215eef1fc8ade880bdf99ac7c8a282e677163c2e5796ed3f333bb0ca",
+      "selected_symbols": [
+        "CanonicalUsage",
+        "normalize_usage"
+      ],
+      "purpose": "Provider-response token usage normalization and aggregation.",
+      "adaptation_boundary": "Exclude prices, cost estimation, provider routing, metadata lookup, and network-backed pricing."
+    },
+    {
+      "source_path": "agent/redact.py",
+      "sha256": "e1d1e6b4a1b1363b593d3741f13c2dc380493d1c0c62f4ce172343f51ad3f52f",
+      "selected_symbols": [
+        "mask_secret",
+        "redact_sensitive_text"
+      ],
+      "purpose": "Prevent explicit secrets and credential-shaped text from entering diagnostics and artifacts.",
+      "adaptation_boundary": "Exclude terminal-command inspection, plugin patterns, browser/CDP handling, and logging framework integration."
+    }
+  ],
+  "excluded_capability_categories": [
+    {
+      "category": "provider and credential discovery",
+      "rationale": "NURSE fixes one ARK endpoint, one model, and an explicitly injected ARK_API_KEY2; discovery or fallback would violate the provider boundary."
+    },
+    {
+      "category": "unrelated transports and provider special cases",
+      "rationale": "Anthropic, Bedrock, Codex, Gemini, OpenRouter, Ollama, and other provider paths are outside the fixed V1 contract."
+    },
+    {
+      "category": "interactive and general-purpose agent capabilities",
+      "rationale": "TUI, gateway, shell, browser, file access, MCP, memory, delegation, and external search are not registered for either NURSE agent."
+    },
+    {
+      "category": "generic parallel tool execution",
+      "rationale": "NURSE uses a deterministic allowlist and state machine; a general dispatcher would expand authority and make ordering harder to audit."
+    },
+    {
+      "category": "provider pricing and remote metadata",
+      "rationale": "V1 records raw usage and latency without provider routing or network pricing lookup."
+    },
+    {
+      "category": "global HERMES configuration",
+      "rationale": "Reproduction must not depend on an installed HERMES profile, environment auto-discovery, or private application state."
+    }
+  ],
+  "selected_files": [
+    {
+      "destination_path": "third_party/hermes_runtime/hermes_runtime/bounded_response.py",
+      "sha256": "8ad4d5a036bb28b82181b48625733aa9bd0c23175a51aff2840cc5a6adc9ec9a",
+      "derived_from": [
+        "agent/bounded_response.py"
+      ],
+      "modifications": "Retained bounded daemon-thread reads and safe closure; modernized typing, removed module logging, and added explicit non-negative bound validation."
+    },
+    {
+      "destination_path": "third_party/hermes_runtime/hermes_runtime/contracts.py",
+      "sha256": "8a048851be9997b2951304e510d4be60ba30fbbd2759613fc1f7ed29d26b3e7a",
+      "derived_from": [
+        "agent/transports/types.py"
+      ],
+      "modifications": "Made records frozen and slotted, removed all provider-specific metadata, and kept only the fixed OpenAI-compatible fields and helpers."
+    },
+    {
+      "destination_path": "third_party/hermes_runtime/hermes_runtime/errors.py",
+      "sha256": "d711bd48ef59c200bc6a1d98cae049076413188b41fe12da1f5f20ebcc075a97",
+      "derived_from": [
+        "agent/errors.py"
+      ],
+      "modifications": "Retained EmptyStreamError only; omitted SSL configuration and mixture-of-agents errors."
+    },
+    {
+      "destination_path": "third_party/hermes_runtime/hermes_runtime/loop.py",
+      "sha256": "eeccb73fa062b5ad857ce75243ef2db9283d599ef8c25369f0f232b2f7746b3c",
+      "derived_from": [
+        "agent/conversation_loop.py"
+      ],
+      "modifications": "Reduced the loop to injected synchronous completion and dispatch functions with a fixed turn cap; removed credentials, provider fallback, TUI, hooks, MoA, compression, persistence, delegation, and built-in tools. Added opt-in return_at_turn_limit retaining the final tool trace without an extra completion; the default still raises."
+    },
+    {
+      "destination_path": "third_party/hermes_runtime/hermes_runtime/redaction.py",
+      "sha256": "bd0feebe28ddc3be56b5f5acac67fc2b124750ab21fb36ec9314ef86807c4a4e",
+      "derived_from": [
+        "agent/redact.py"
+      ],
+      "modifications": "Kept display masking and a fixed credential-text boundary, then added project-required recursive JSON-value redaction; removed plugins, configuration switches, terminal commands, files, browser/CDP, URL navigation, and logging integration."
+    },
+    {
+      "destination_path": "third_party/hermes_runtime/hermes_runtime/repair.py",
+      "sha256": "3ddd6d75209f645093d39fec663b73fa0bd389c3986c7afd06ad6dcd984f2629",
+      "derived_from": [
+        "agent/message_sanitization.py"
+      ],
+      "modifications": "Kept bounded JSON-object repair and deterministic call IDs, including safe Python literal normalization outside JSON strings; removed provider reasoning policies, image handling, broad message mutation, and raw-argument logging."
+    },
+    {
+      "destination_path": "third_party/hermes_runtime/hermes_runtime/retry.py",
+      "sha256": "7e607f8667c838658e05e73f253a213d43b6fb0ca778ca7b0d61c28deb1cbb9d",
+      "derived_from": [
+        "agent/retry_utils.py"
+      ],
+      "modifications": "Retained Retry-After parsing only; removed jitter, adaptive delays, and provider-specific overload retry ceilings."
+    },
+    {
+      "destination_path": "third_party/hermes_runtime/hermes_runtime/tool_messages.py",
+      "sha256": "f894f766d7ff4242bfe40c7a2e0f7e57bbfc8dde71873c93e0a3d969cf41e298",
+      "derived_from": [
+        "agent/tool_dispatch_helpers.py"
+      ],
+      "modifications": "Retained strict OpenAI tool-result fields and composite-ID normalization; removed nonstandard name/tool_name wire extensions, serialized structured content as stable compact JSON strings, and removed generic dispatch, timestamps, filesystem logic, multimodal output, MCP, browser, and web wrappers."
+    },
+    {
+      "destination_path": "third_party/hermes_runtime/hermes_runtime/transport.py",
+      "sha256": "41798d17e8d9c833b4ccfa03e0ad457f2b0cebc5b4440a476bd48fc64c8a9d25",
+      "derived_from": [
+        "agent/transports/base.py",
+        "agent/transports/chat_completions.py"
+      ],
+      "modifications": "Combined the abstract transport and one chat-completions adapter; removed provider profiles, prompt caching, reasoning-family branches, Gemini/OpenRouter handling, client construction, credentials, and fallback."
+    },
+    {
+      "destination_path": "third_party/hermes_runtime/hermes_runtime/usage.py",
+      "sha256": "63008819effead20e6eb3f37162c3b94ca45226945823e27a9d3cf3d81ad80cb",
+      "derived_from": [
+        "agent/usage_pricing.py"
+      ],
+      "modifications": "Kept canonical aggregation and OpenAI-compatible token buckets; removed Anthropic/Codex modes, billing routes, price tables, cost estimation, metadata, and network lookup."
+    }
+  ],
+  "project_owned_assembly_files": [
+    {
+      "destination_path": "third_party/hermes_runtime/hermes_runtime/__init__.py",
+      "sha256": "058e5706d94bc20fb48e7deb2da114fd271c0fec031ac614317e06018ec10a5c",
+      "purpose": "Explicit public exports for the minimal embedded package."
+    },
+    {
+      "destination_path": "third_party/hermes_runtime/hermes_runtime/runtime.py",
+      "sha256": "334ac44ac1b9d9d65dea11ffe6a472fa1cce01044fc6a8572340bb126115356f",
+      "purpose": "Project-owned allowlisted assembly over the attributed components."
+    }
+  ]
+}

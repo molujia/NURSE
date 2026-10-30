@@ -1,0 +1,1 @@
+Browse/read_node scoring cards. Explain actual formal contributions and ties, not a new ranking. Publication alone is not scoring use; supplementary checks never rescore. Keep competing evidence and limitations.

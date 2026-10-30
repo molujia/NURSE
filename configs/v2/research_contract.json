@@ -1,0 +1,79 @@
+{
+  "schema_version": "nurse.v2.research-contract/1",
+  "source_design": {
+    "document_version": "2.1",
+    "repository_path": "docs/superpowers/plans/2026-09-05-nurse-v2-unsupervised-optimization-design.md",
+    "revision_date": "2026-09-05",
+    "sha256": "BF2534610F126A420B37F39961BD38AA938EBBAB54C1820918745816D768D342"
+  },
+  "invariants": [
+    {
+      "id": "unsupervised_service_localization",
+      "statement": "Benchmark root-cause labels do not train or fit the localizer, semantic model, ranker, prompts, or weights."
+    },
+    {
+      "id": "dual_explanation_objectives",
+      "statement": "Mechanism interpretability and result explainability are evaluated separately and cannot compensate for each other through one total score."
+    },
+    {
+      "id": "evidence_grounded_collaboration",
+      "statement": "Large-model proposals influence ranking only through deterministic verification and the report reads the frozen ranking context only."
+    },
+    {
+      "id": "honest_evaluation",
+      "statement": "Exposure, incident groups, failures, fallbacks, costs, uncertainty, Final unblinding, and descriptive full-data results remain explicit."
+    }
+  ],
+  "localization_contract": {
+    "learning_regime": "unsupervised",
+    "target_granularity": "service",
+    "benchmark_labels_available_to_inference": false,
+    "benchmark_labels_available_to_model_selection": false
+  },
+  "explanation_contract": {
+    "interpretability": {
+      "owner": "small_model",
+      "scope": "observations, mechanisms, predicates, verification, score contributions, rejection reasons, and deterministic sensitivity"
+    },
+    "explainability": {
+      "owner": "large_model",
+      "scope": "frozen-result comprehension, competing explanations, uncertainty, and conditional verification or mitigation actions"
+    },
+    "combined_compensating_score": false
+  },
+  "evidence_permissions": {
+    "ranking_requires_deterministic_verification": true,
+    "report_reads_frozen_context_only": true,
+    "semantic_model_may_access_labels": false,
+    "semantic_model_may_add_candidates": false,
+    "semantic_model_may_invoke_arbitrary_tools": false
+  },
+  "replaceable_modules": [
+    "agent_roles",
+    "candidate_context_policy",
+    "hermes_orchestration",
+    "history",
+    "hypothesis_mechanisms",
+    "ranking_formula"
+  ],
+  "development_defaults": {
+    "agent_request_budget": {
+      "status": "replaceable",
+      "ranking_logical_requests": 2,
+      "report_logical_requests": 1
+    },
+    "candidate_focus_budget": {
+      "status": "replaceable",
+      "q_base": 8,
+      "q_max": 12
+    },
+    "history_mode": {
+      "status": "replaceable",
+      "value": "off"
+    },
+    "reference_ranker": {
+      "status": "replaceable",
+      "name": "transparent_eprh_reference_v1"
+    }
+  }
+}

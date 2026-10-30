@@ -1,0 +1,9 @@
+适用：解释固定优先次序、比较候选的实际评分依据、核对选择链，而非重排。
+
+工具：compare_candidates 必须恰好两个不同准入候选；inspect_candidate 用 focus=scoring。摘要给排名和组成，score_family 给真实 primary_family、代表项与家族使用，score_term 给该项输入、pool及selection，score_propagation给汇总及路径入口，score_path给该路径。使用 read_node 的真实可见卡，payload与游标沿原契约；链接不是内容。
+
+判读：local_strength=null 与 unknown_term_ids/unknown_term_count 表示数值不可得，不是未读计数、健康或故障确认；0是已知数值。池内胜出、家族代表和最终参与聚合分别看 selection，不当作三份独立支持。同家族不等于同指标或同机制；核对role_mechanism_ids、定义、窗口及来源。父卡已提供代表项字段不等于完整子卡已读，也不能声称相关字段全未见。
+
+反馈分支：支持时查实际竞争差别；反证或unknown保留原作用域；同记录重复无新增时自主选择具体新问题、核对重读或停止。简报的必要／反证／可选、AND/OR、true/false/unknown都须结合解释；反证true是在支持反驳，不是机制成立。只有unknown转为已知能否改变结论取决于现有组合结构，不凭缺原始数列否认已执行测量。全部未读、未发布和零分均不自动排除候选。
+
+近并列候选的下一问可直接复用既有compare_candidates(focus=scoring)的双侧同类pair，再沿双方score_lineage_summary的family_details，按真实used_in_aggregation选择同家族score_family；必要时才read_node该家族的term。先比较双方实际使用的来源与分项，再解释哪个差异能支持有限判断。某一侧未用error等家族只能说明未参加该侧聚合，不能单独解释正式分差；若另一侧未读或来源不齐，明确保留未决。此顺序是避免误归因的判读建议，不剥夺有理由的其他合法检查或提前停止。

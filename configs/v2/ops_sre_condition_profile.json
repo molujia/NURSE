@@ -1,0 +1,18 @@
+{
+  "schema_version": "nurse.v2.sre-profile/4",
+  "profile_id": "v2-ops-sre/1",
+  "core_method_id": "normal-b0-ops-core/1",
+  "investigation_profile_id": "hermes-sre-tools/7",
+  "usage_policy_id": "ops-empirical-input-cost/1",
+  "decision_protocol": "nurse.v2.sre-decision-exchange/8",
+  "report_protocol": "nurse.v2.sre-report-exchange/10",
+  "output_policy": "explicit_max_tokens_65536/1",
+  "action_limit": 8,
+  "decision_limit": 8,
+  "report_limit": 1,
+  "attempt_limit": 5,
+  "llm_in_flight": 1,
+  "api_key_env": "ARK_API_KEY2",
+  "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+  "model": "deepseek-v4-flash-ga-260731"
+}

@@ -1,0 +1,1 @@
+Browse onsets or use known measured IDs for compare_timing; read_node for bounds/coverage. Overlap, clock uncertainty and missing measurements forbid strict order. Measure only one necessary signal next, or stop.

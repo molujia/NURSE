@@ -1,0 +1,139 @@
+{
+  "schema_version": "nurse.v2.experiment-version-registry/1",
+  "registry_version": "v2.1-reference-1",
+  "research_contract": {
+    "path": "configs/v2/research_contract.json",
+    "hash_mode": "sha256-canonical-json-v1",
+    "sha256": "c4d441b1d7f146a9f0ae3a7f89fb11fd50355924e08bbd8507dbc308d4a45ef9"
+  },
+  "variants": [
+    {
+      "id": "A0",
+      "name": "V1-frozen",
+      "kind": "historical_baseline",
+      "status": "frozen",
+      "method_namespace": "v1",
+      "implementation_version": "paper-v1-frozen-20260905",
+      "localization_pipeline": "paper_v1_frozen",
+      "semantic_stage": "pre_ranking",
+      "report_pipeline": "paper_v1_user_manager",
+      "credential_requirement": "ark_api_key2",
+      "immutable_manifest": "configs/v2/a0_frozen_manifest.json"
+    },
+    {
+      "id": "A1",
+      "name": "V1-repaired",
+      "kind": "repair_baseline",
+      "status": "planned",
+      "method_namespace": "v2",
+      "implementation_version": "v1-repaired-v1",
+      "localization_pipeline": "paper_v1_repaired",
+      "semantic_stage": "pre_ranking",
+      "report_pipeline": "paper_v1_user_manager",
+      "credential_requirement": "ark_api_key2",
+      "derived_from": "A0",
+      "allowed_changes": [
+        "candidate_fallback",
+        "entity_binding",
+        "topology_missing_detection"
+      ]
+    },
+    {
+      "id": "B0",
+      "name": "V2-small",
+      "kind": "small_model",
+      "status": "planned",
+      "method_namespace": "v2",
+      "implementation_version": "v2-small-reference-v1",
+      "localization_pipeline": "v2_transparent_small",
+      "semantic_stage": "none",
+      "report_pipeline": "deterministic_v2",
+      "credential_requirement": "none"
+    },
+    {
+      "id": "B1",
+      "name": "V2-small+report",
+      "kind": "report_only",
+      "status": "planned",
+      "method_namespace": "v2",
+      "implementation_version": "v2-small-report-reference-v1",
+      "localization_pipeline": "v2_transparent_small",
+      "semantic_stage": "none",
+      "report_pipeline": "shared_v2_report_agent",
+      "credential_requirement": "ark_api_key2",
+      "derived_from": "B0",
+      "ranking_equivalent_to": "B0"
+    },
+    {
+      "id": "B2",
+      "name": "V2-hybrid",
+      "kind": "hybrid",
+      "status": "planned",
+      "method_namespace": "v2",
+      "implementation_version": "v2-hybrid-reference-v1",
+      "localization_pipeline": "v2_transparent_hybrid",
+      "semantic_stage": "pre_ranking",
+      "report_pipeline": "shared_v2_report_agent",
+      "credential_requirement": "ark_api_key2",
+      "derived_from": "B0"
+    },
+    {
+      "id": "B2-no-propagation",
+      "name": "V2-hybrid without propagation",
+      "kind": "ablation",
+      "status": "planned",
+      "method_namespace": "v2",
+      "implementation_version": "v2-hybrid-no-propagation-v1",
+      "localization_pipeline": "v2_transparent_hybrid",
+      "semantic_stage": "pre_ranking",
+      "report_pipeline": "shared_v2_report_agent",
+      "credential_requirement": "ark_api_key2",
+      "derived_from": "B2",
+      "ablation_of": "B2",
+      "disabled_modules": [
+        "propagation"
+      ]
+    },
+    {
+      "id": "B2-no-role-adjustment",
+      "name": "V2-hybrid without verified role adjustment",
+      "kind": "ablation",
+      "status": "planned",
+      "method_namespace": "v2",
+      "implementation_version": "v2-hybrid-no-role-adjustment-v1",
+      "localization_pipeline": "v2_transparent_hybrid",
+      "semantic_stage": "pre_ranking",
+      "report_pipeline": "shared_v2_report_agent",
+      "credential_requirement": "ark_api_key2",
+      "derived_from": "B2",
+      "ablation_of": "B2",
+      "disabled_modules": [
+        "verified_role_adjustment"
+      ]
+    },
+    {
+      "id": "S-simple-statistical",
+      "name": "Preselected simple statistical comparator",
+      "kind": "external_baseline",
+      "status": "planned",
+      "method_namespace": "external",
+      "implementation_version": "simple-statistical-selection-v1",
+      "localization_pipeline": "external_native",
+      "semantic_stage": "native",
+      "report_pipeline": "external_native",
+      "credential_requirement": "none"
+    },
+    {
+      "id": "S-strong-external",
+      "name": "Preselected strong external comparator",
+      "kind": "external_baseline",
+      "status": "selection_pending",
+      "method_namespace": "external",
+      "implementation_version": "pending-selection-v1",
+      "localization_pipeline": "external_native",
+      "semantic_stage": "native",
+      "report_pipeline": "external_native",
+      "credential_requirement": "native_pending"
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+Use browse_index or exact IDs with read_node. Establish scope/windows, modalities and coverage. Empty pages are not healthy findings. Page only if useful; each navigation/read/refusal costs one action.

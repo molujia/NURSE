@@ -1,4 +1,7 @@
-﻿# Keep generated local artifacts out of source archives.
+# Preserve byte identity for the content-addressed source inventory on all platforms.
+* -text
+
+# Keep generated local artifacts out of source archives.
 outputs/ export-ignore
 .pytest_cache/ export-ignore
 .pytest_tmp/ export-ignore

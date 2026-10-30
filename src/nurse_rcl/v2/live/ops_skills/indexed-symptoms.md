@@ -1,0 +1,1 @@
+Use browse_index or known request_key; measure_signal measures one series. read_node sections retain detail. Compare actual episodes and baseline; retain false/unknown. Summaries alone do not prove persistence.

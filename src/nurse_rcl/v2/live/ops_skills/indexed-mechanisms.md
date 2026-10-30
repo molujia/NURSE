@@ -1,0 +1,1 @@
+Browse/read_node mechanism tables; check_mechanism uses obtained evidence only. Retain necessary conditions, refutations and unknowns. Choose a distinguishing registered measurement or stop; support is not causality.

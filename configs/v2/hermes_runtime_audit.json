@@ -1,0 +1,615 @@
+{
+  "approved_primitives": [
+    {
+      "consumer_purpose": "Read diagnostic snippets for the V2 single-exchange adapter.",
+      "direct_imports": [
+        "__future__",
+        "contextlib",
+        "httpx",
+        "threading"
+      ],
+      "modifications": "Retained bounded daemon-thread reads and safe closure; modernized typing, removed module logging, and added explicit non-negative bound validation.",
+      "module": "bounded_response",
+      "path": "third_party/hermes_runtime/hermes_runtime/bounded_response.py",
+      "restrictions": "Retained bytes and worker wait are bounded; response.close may block, a daemon may outlive the wait, and incoming chunks may allocate more. NURSE must enforce transport limits; this is not a hard request deadline.",
+      "sha256": "8ad4d5a036bb28b82181b48625733aa9bd0c23175a51aff2840cc5a6adc9ec9a",
+      "source_references": [
+        {
+          "adaptation_boundary": "Keep bounded reads and safe closure only; no general HTTP client behavior.",
+          "purpose": "Bound error-body reads before redacted provider diagnostics are recorded.",
+          "selected_symbols": [
+            "read_streaming_error_body",
+            "read_error_body_or_default"
+          ],
+          "sha256": "d237945a88d611a78b37efb4c8a17b49fda192a4274a626c4f0b060fb82fc60b",
+          "source_path": "agent/bounded_response.py"
+        }
+      ],
+      "symbols": [
+        "read_error_body_or_default",
+        "read_streaming_error_body"
+      ]
+    },
+    {
+      "consumer_purpose": "Represent provider-neutral responses, calls, and usage.",
+      "direct_imports": [
+        "__future__",
+        "dataclasses",
+        "json",
+        "typing"
+      ],
+      "modifications": "Made records frozen and slotted, removed all provider-specific metadata, and kept only the fixed OpenAI-compatible fields and helpers.",
+      "module": "contracts",
+      "path": "third_party/hermes_runtime/hermes_runtime/contracts.py",
+      "restrictions": "Frozen dataclasses are shallow, not a deep immutable audit store; V2 must copy, validate, and freeze its own artifacts.",
+      "sha256": "8a048851be9997b2951304e510d4be60ba30fbbd2759613fc1f7ed29d26b3e7a",
+      "source_references": [
+        {
+          "adaptation_boundary": "Remove properties and metadata for Anthropic, Codex, and other unrelated transports.",
+          "purpose": "Minimal normalized message, tool-call, response, and usage contracts.",
+          "selected_symbols": [
+            "ToolCall",
+            "Usage",
+            "NormalizedResponse",
+            "build_tool_call",
+            "map_finish_reason"
+          ],
+          "sha256": "148b1f6389d10952a70da2a79c7a6baf056f7a41178b9b5e0b673626dad2fa2b",
+          "source_path": "agent/transports/types.py"
+        }
+      ],
+      "symbols": [
+        "NormalizedResponse",
+        "ToolCall",
+        "Usage",
+        "build_tool_call",
+        "map_finish_reason"
+      ]
+    },
+    {
+      "consumer_purpose": "Represent an empty provider response.",
+      "direct_imports": [],
+      "modifications": "Retained EmptyStreamError only; omitted SSL configuration and mixture-of-agents errors.",
+      "module": "errors",
+      "path": "third_party/hermes_runtime/hermes_runtime/errors.py",
+      "restrictions": "Does not classify retryability or authorize another request.",
+      "sha256": "d711bd48ef59c200bc6a1d98cae049076413188b41fe12da1f5f20ebcc075a97",
+      "source_references": [
+        {
+          "adaptation_boundary": "Exclude unrelated SSL and mixture-of-agents error types.",
+          "purpose": "Narrow empty-provider-response failure contract.",
+          "selected_symbols": [
+            "EmptyStreamError"
+          ],
+          "sha256": "237581ac4180cffe9a5d0b4886cb865aba6eb3d2328ff1bb918987727670a0bb",
+          "source_path": "agent/errors.py"
+        }
+      ],
+      "symbols": [
+        "EmptyStreamError"
+      ]
+    },
+    {
+      "consumer_purpose": "Redact diagnostic values before NURSE artifact recording.",
+      "direct_imports": [
+        "__future__",
+        "collections.abc",
+        "re",
+        "typing"
+      ],
+      "modifications": "Kept display masking and a fixed credential-text boundary, then added project-required recursive JSON-value redaction; removed plugins, configuration switches, terminal commands, files, browser/CDP, URL navigation, and logging integration.",
+      "module": "redaction",
+      "path": "third_party/hermes_runtime/hermes_runtime/redaction.py",
+      "restrictions": "Patterns are not complete detection; NURSE must inject explicit secrets, exclude credentials and forbidden fields before serialization, and sanitize mapping keys. mask_secret reveals a prefix/suffix and is not safe artifact redaction.",
+      "sha256": "bd0feebe28ddc3be56b5f5acac67fc2b124750ab21fb36ec9314ef86807c4a4e",
+      "source_references": [
+        {
+          "adaptation_boundary": "Exclude terminal-command inspection, plugin patterns, browser/CDP handling, and logging framework integration.",
+          "purpose": "Prevent explicit secrets and credential-shaped text from entering diagnostics and artifacts.",
+          "selected_symbols": [
+            "mask_secret",
+            "redact_sensitive_text"
+          ],
+          "sha256": "e1d1e6b4a1b1363b593d3741f13c2dc380493d1c0c62f4ce172343f51ad3f52f",
+          "source_path": "agent/redact.py"
+        }
+      ],
+      "symbols": [
+        "mask_secret",
+        "redact_sensitive_text",
+        "redact_value"
+      ]
+    },
+    {
+      "consumer_purpose": "Repair structured arguments and derive stable call identifiers.",
+      "direct_imports": [
+        ".contracts",
+        "__future__",
+        "collections.abc",
+        "hashlib",
+        "json",
+        "re"
+      ],
+      "modifications": "Kept bounded JSON-object repair and deterministic call IDs, including safe Python literal normalization outside JSON strings; removed provider reasoning policies, image handling, broad message mutation, and raw-argument logging.",
+      "module": "repair",
+      "path": "third_party/hermes_runtime/hermes_runtime/repair.py",
+      "restrictions": "A fixed sequence of repairs, not a byte/depth/time limit. Failure collapses to an empty object. NURSE must bound input, retain the original response, and perform strict schema validation; repair success is not semantic acceptance.",
+      "sha256": "3ddd6d75209f645093d39fec663b73fa0bd389c3986c7afd06ad6dcd984f2629",
+      "source_references": [
+        {
+          "adaptation_boundary": "Exclude image stripping, provider-specific reasoning echo, and broad message rewriting.",
+          "purpose": "Deterministic malformed tool-argument repair and stable tool-call identifiers.",
+          "selected_symbols": [
+            "_escape_invalid_chars_in_json_strings",
+            "_repair_tool_call_arguments",
+            "deterministic_call_id",
+            "uniquify_tool_call_ids"
+          ],
+          "sha256": "477b947e8c032450cb8e504ca15106d979bc4b88ca3aa3f17a5b525f6dddacf0",
+          "source_path": "agent/message_sanitization.py"
+        }
+      ],
+      "symbols": [
+        "deterministic_call_id",
+        "repair_tool_call_arguments",
+        "uniquify_tool_call_ids"
+      ]
+    },
+    {
+      "consumer_purpose": "Parse a provider retry hint for the NURSE attempt controller.",
+      "direct_imports": [
+        "__future__",
+        "datetime",
+        "email.utils",
+        "typing"
+      ],
+      "modifications": "Retained Retry-After parsing only; removed jitter, adaptive delays, and provider-specific overload retry ceilings.",
+      "module": "retry",
+      "path": "third_party/hermes_runtime/hermes_runtime/retry.py",
+      "restrictions": "No retry execution or attempt ledger. NURSE must reject nonfinite hints, clamp delays, and account for HTTP-date clock dependence; at most five lifetime attempts.",
+      "sha256": "7e607f8667c838658e05e73f253a213d43b6fb0ca778ca7b0d61c28deb1cbb9d",
+      "source_references": [
+        {
+          "adaptation_boundary": "Exclude jitter, provider-specific overload detection, and adaptive unbounded retry policy.",
+          "purpose": "Parse bounded Retry-After delays for the fixed five-attempt policy.",
+          "selected_symbols": [
+            "parse_retry_after_seconds"
+          ],
+          "sha256": "9501b937326f497eaa0c3bebd5db3f410e060ad0a3254f351df05f733416f31b",
+          "source_path": "agent/retry_utils.py"
+        }
+      ],
+      "symbols": [
+        "parse_retry_after_seconds"
+      ]
+    },
+    {
+      "consumer_purpose": "Build and normalize one explicit OpenAI-compatible exchange for the future V2 adapter.",
+      "direct_imports": [
+        ".contracts",
+        ".errors",
+        ".repair",
+        "__future__",
+        "abc",
+        "collections.abc",
+        "typing"
+      ],
+      "modifications": "Combined the abstract transport and one chat-completions adapter; removed provider profiles, prompt caching, reasoning-family branches, Gemini/OpenRouter handling, client construction, credentials, and fallback.",
+      "module": "transport",
+      "path": "third_party/hermes_runtime/hermes_runtime/transport.py",
+      "restrictions": "No client, request execution, provider selection, or credential lookup. Choices checking is shallow and kwargs can override fields. NURSE must pin fields, restrict params, validate original structure and finish reason, and preserve raw usage before lossy normalization.",
+      "sha256": "41798d17e8d9c833b4ccfa03e0ad457f2b0cebc5b4440a476bd48fc64c8a9d25",
+      "source_references": [
+        {
+          "adaptation_boundary": "Retain only the interface required by the one explicit OpenAI-compatible transport.",
+          "purpose": "Abstract request conversion and response normalization contract.",
+          "selected_symbols": [
+            "ProviderTransport"
+          ],
+          "sha256": "e9b0d020f9cf1aae5d0a470363c7694cb3f3f0257fbeff00fc80435e9b80befe",
+          "source_path": "agent/transports/base.py"
+        },
+        {
+          "adaptation_boundary": "Remove Gemini, OpenRouter, provider-profile, prompt-cache, reasoning-family, and automatic compatibility branches.",
+          "purpose": "OpenAI-compatible chat-completions request construction and normalized response parsing.",
+          "selected_symbols": [
+            "ChatCompletionsTransport.convert_messages",
+            "ChatCompletionsTransport.convert_tools",
+            "ChatCompletionsTransport.build_kwargs",
+            "ChatCompletionsTransport.normalize_response",
+            "ChatCompletionsTransport.validate_response"
+          ],
+          "sha256": "121313b8edc0bb395b9a5d60231abb1eab9d208649a17b2821ce748554017b92",
+          "source_path": "agent/transports/chat_completions.py"
+        }
+      ],
+      "symbols": [
+        "ChatCompletionsTransport",
+        "ProviderTransport"
+      ]
+    },
+    {
+      "consumer_purpose": "Normalize provider-reported token counts and aggregate usage.",
+      "direct_imports": [
+        "__future__",
+        "collections.abc",
+        "dataclasses",
+        "typing"
+      ],
+      "modifications": "Kept canonical aggregation and OpenAI-compatible token buckets; removed Anthropic/Codex modes, billing routes, price tables, cost estimation, metadata, and network lookup.",
+      "module": "usage",
+      "path": "third_party/hermes_runtime/hermes_runtime/usage.py",
+      "restrictions": "No pricing or remote metadata. Defaults do not prove zero usage; NURSE retains raw usage and availability status, and counts physical attempts independently of logical requests.",
+      "sha256": "63008819effead20e6eb3f37162c3b94ca45226945823e27a9d3cf3d81ad80cb",
+      "source_references": [
+        {
+          "adaptation_boundary": "Exclude prices, cost estimation, provider routing, metadata lookup, and network-backed pricing.",
+          "purpose": "Provider-response token usage normalization and aggregation.",
+          "selected_symbols": [
+            "CanonicalUsage",
+            "normalize_usage"
+          ],
+          "sha256": "08e7be62215eef1fc8ade880bdf99ac7c8a282e677163c2e5796ed3f333bb0ca",
+          "source_path": "agent/usage_pricing.py"
+        }
+      ],
+      "symbols": [
+        "CanonicalUsage",
+        "normalize_usage"
+      ]
+    }
+  ],
+  "audit_date": "2026-09-11",
+  "compatibility_only": [
+    {
+      "consumer_purpose": "Preserve A0 package exports and import compatibility.",
+      "direct_imports": [
+        ".contracts",
+        ".errors",
+        ".loop",
+        ".runtime",
+        ".transport",
+        ".usage"
+      ],
+      "modifications": "Explicit public exports for the minimal embedded package.",
+      "module": "__init__",
+      "path": "third_party/hermes_runtime/hermes_runtime/__init__.py",
+      "restrictions": "Eager imports load loop/runtime/tool_messages indirectly; loading is not V2 callable approval. V2 imports named primitives, never the root export surface.",
+      "sha256": "058e5706d94bc20fb48e7deb2da114fd271c0fec031ac614317e06018ec10a5c",
+      "source_references": [],
+      "symbols": []
+    },
+    {
+      "consumer_purpose": "Keep A0 loop derivation for the frozen baseline.",
+      "direct_imports": [
+        ".contracts",
+        ".tool_messages",
+        ".usage",
+        "__future__",
+        "collections.abc",
+        "dataclasses",
+        "json",
+        "typing"
+      ],
+      "modifications": "Reduced the loop to injected synchronous completion and dispatch functions with a fixed turn cap; removed credentials, provider fallback, TUI, hooks, MoA, compression, persistence, delegation, and built-in tools.",
+      "module": "loop",
+      "path": "third_party/hermes_runtime/hermes_runtime/loop.py",
+      "restrictions": "V2 must not call run_conversation or use generic completion/dispatch loops.",
+      "sha256": "658fe969fa0c4d03dc0b05db9b01a66f0975788f739c0e860a6db160775273cf",
+      "source_references": [
+        {
+          "adaptation_boundary": "Reimplement the narrow loop without provider fallback, credential refresh, compression, MoA, delegation, TUI, hooks, or billing branches.",
+          "purpose": "Reference control flow for a single-model assistant/tool-result loop.",
+          "selected_symbols": [
+            "run_conversation"
+          ],
+          "sha256": "8ea02d396288812514a664a34bad8944c3f573087293e365cd72e6ad9f744d92",
+          "source_path": "agent/conversation_loop.py"
+        }
+      ],
+      "symbols": []
+    },
+    {
+      "consumer_purpose": "Keep A0 project-owned runtime assembly.",
+      "direct_imports": [
+        ".contracts",
+        ".tool_messages",
+        ".transport",
+        ".usage",
+        "__future__",
+        "collections.abc",
+        "copy",
+        "dataclasses",
+        "json",
+        "typing"
+      ],
+      "modifications": "Project-owned allowlisted assembly over the attributed components.",
+      "module": "runtime",
+      "path": "third_party/hermes_runtime/hermes_runtime/runtime.py",
+      "restrictions": "V2 must not instantiate EmbeddedAgentRuntime; its default 16-turn tool loop and terminal calls do not implement V2 budgets.",
+      "sha256": "334ac44ac1b9d9d65dea11ffe6a472fa1cce01044fc6a8572340bb126115356f",
+      "source_references": [],
+      "symbols": []
+    },
+    {
+      "consumer_purpose": "Keep A0 tool-result wire formatting.",
+      "direct_imports": [
+        "__future__",
+        "json",
+        "typing"
+      ],
+      "modifications": "Retained strict OpenAI tool-result fields and composite-ID normalization; removed nonstandard name/tool_name wire extensions, serialized structured content as stable compact JSON strings, and removed generic dispatch, timestamps, filesystem logic, multimodal output, MCP, browser, and web wrappers.",
+      "module": "tool_messages",
+      "path": "third_party/hermes_runtime/hermes_runtime/tool_messages.py",
+      "restrictions": "V2 must not invoke this compatibility interface or generic tool dispatch. V2 owns deterministic query-result framing.",
+      "sha256": "f894f766d7ff4242bfe40c7a2e0f7e57bbfc8dde71873c93e0a3d969cf41e298",
+      "source_references": [
+        {
+          "adaptation_boundary": "Exclude shell/file mutation handling, generic parallel dispatch, MCP policy, multimodal results, and untrusted-output wrapping.",
+          "purpose": "Canonical assistant-facing tool-result message construction.",
+          "selected_symbols": [
+            "make_tool_result_message"
+          ],
+          "sha256": "8514bb388f781453d2ed2405b1500dc1946396fcfb585ced5f36f761714cfc31",
+          "source_path": "agent/tool_dispatch_helpers.py"
+        }
+      ],
+      "symbols": []
+    }
+  ],
+  "content_sha256": "6c71478f01b3bd93f88f3cb24f1a5a1998ad2dcd893f511e656ab7a8063a5bd4",
+  "dependencies": {
+    "closure_scope": "locked union for supported Python versions, markers retained",
+    "direct_third_party": [
+      "httpx==0.28.1"
+    ],
+    "lock_path": "uv.lock",
+    "locked_closure": [
+      {
+        "dependencies": [
+          {
+            "marker": "python_full_version < '3.11'",
+            "name": "exceptiongroup"
+          },
+          {
+            "name": "idna"
+          },
+          {
+            "name": "typing-extensions"
+          }
+        ],
+        "name": "anyio",
+        "version": "4.14.2"
+      },
+      {
+        "dependencies": [],
+        "name": "certifi",
+        "version": "2026.7.22"
+      },
+      {
+        "dependencies": [
+          {
+            "name": "typing-extensions"
+          }
+        ],
+        "name": "exceptiongroup",
+        "version": "1.3.1"
+      },
+      {
+        "dependencies": [],
+        "name": "h11",
+        "version": "0.16.0"
+      },
+      {
+        "dependencies": [
+          {
+            "name": "certifi"
+          },
+          {
+            "name": "h11"
+          }
+        ],
+        "name": "httpcore",
+        "version": "1.0.9"
+      },
+      {
+        "dependencies": [
+          {
+            "name": "anyio"
+          },
+          {
+            "name": "certifi"
+          },
+          {
+            "name": "httpcore"
+          },
+          {
+            "name": "idna"
+          }
+        ],
+        "name": "httpx",
+        "version": "0.28.1"
+      },
+      {
+        "dependencies": [],
+        "name": "idna",
+        "version": "3.19"
+      },
+      {
+        "dependencies": [],
+        "name": "typing-extensions",
+        "version": "4.14.1"
+      }
+    ],
+    "optional_httpx_extras": [],
+    "project_path": "pyproject.toml",
+    "requires_python": ">=3.10,<3.13",
+    "test_toml_parser": "tomllib on Python >=3.11; pytest's tomli dependency on Python 3.10"
+  },
+  "excluded_capabilities": [
+    {
+      "capability": "billing_lookup",
+      "reason": "Only raw usage accounting is approved."
+    },
+    {
+      "capability": "browser",
+      "reason": "No browser authority is needed for telemetry reasoning."
+    },
+    {
+      "capability": "compression",
+      "reason": "NURSE owns explicit payload and token bounds."
+    },
+    {
+      "capability": "credential_discovery",
+      "reason": "Only explicitly loaded ARK_API_KEY2 is allowed; no discovery."
+    },
+    {
+      "capability": "delegation",
+      "reason": "Case orchestration and agent roles belong to NURSE."
+    },
+    {
+      "capability": "file_mutation",
+      "reason": "No model-selected filesystem changes."
+    },
+    {
+      "capability": "full_conversation_loop",
+      "reason": "Unbounded or generic loops do not implement V2 logical-request budgets."
+    },
+    {
+      "capability": "gateway",
+      "reason": "No gateway installation or interactive serving dependency."
+    },
+    {
+      "capability": "generic_tool_dispatch",
+      "reason": "Only deterministic NURSE queries may execute."
+    },
+    {
+      "capability": "global_configuration",
+      "reason": "Reproduction must not depend on a HERMES profile."
+    },
+    {
+      "capability": "mcp",
+      "reason": "No external tool discovery or execution."
+    },
+    {
+      "capability": "memory",
+      "reason": "No implicit cross-case memory or state."
+    },
+    {
+      "capability": "moa",
+      "reason": "No upstream mixture-of-agents routing."
+    },
+    {
+      "capability": "parallel_dispatch",
+      "reason": "Ordering and llm_in_flight=1 belong to NURSE."
+    },
+    {
+      "capability": "plugin_llm",
+      "reason": "Auxiliary provider/client/configuration dependencies are outside the adapter."
+    },
+    {
+      "capability": "pricing_lookup",
+      "reason": "No network-backed price lookup in inference."
+    },
+    {
+      "capability": "provider_discovery",
+      "reason": "ARK endpoint and model are explicitly pinned by NURSE."
+    },
+    {
+      "capability": "provider_model_fallback",
+      "reason": "No alternate provider, model, or key."
+    },
+    {
+      "capability": "remote_metadata",
+      "reason": "No implicit network metadata queries."
+    },
+    {
+      "capability": "search",
+      "reason": "No external search authority."
+    },
+    {
+      "capability": "shell",
+      "reason": "No model-selected shell execution."
+    },
+    {
+      "capability": "tool_discovery",
+      "reason": "Query schemas and permission allowlists are fixed by NURSE."
+    },
+    {
+      "capability": "tui",
+      "reason": "No interactive terminal application is required."
+    },
+    {
+      "capability": "unrelated_transports",
+      "reason": "Only the explicit OpenAI-compatible data path is selected."
+    }
+  ],
+  "frozen_source_manifest": {
+    "path": "third_party/hermes_runtime/SOURCE_MANIFEST.json",
+    "sha256": "4d9eb36fd85e6c3ddf506ecee24258b7e2a275a064ffc8e430ce167b7f30ba54"
+  },
+  "hash_mode": "sha256-canonical-json-excluding-content-sha256-v1",
+  "license": {
+    "path": "third_party/hermes_runtime/LICENSE",
+    "redistribution": "retain MIT copyright and permission notice",
+    "sha256": "821556e6336796450ab852d375117b48a4887e71d255794fd6318d99982a5ab6"
+  },
+  "ownership": {
+    "b0_b1_b2_attribution": "NURSE enforces B0/B1 rank identity and attributes each B0/B2 score difference.",
+    "cache_checkpoint_seal_degradation": "NURSE owns content identity, checkpoint/resume, invalidation, output sealing, and explicit fallback modes.",
+    "case_state_machine": "NURSE owns per-case stage ordering; no generic HERMES loop.",
+    "dual_explanation": "NURSE preserves separate Interpretability and Explainability without compensatory combined scoring.",
+    "first_valid_response": "NURSE accepts the first structurally valid response; semantic rejection or low score cannot trigger answer shopping.",
+    "frozen_c_q_prompts_schemas": "NURSE owns frozen C/Q, opaque IDs, prompts, schemas, mechanism definitions, and budgets.",
+    "logical_request_attempt_ledger": "NURSE owns durable logical-request IDs and at most five physical attempts across restarts.",
+    "provider_credentials_authorization": "NURSE pins ARK endpoint/model, only ARK_API_KEY2, unlabeled authorized payload scope, and llm_in_flight=1.",
+    "queries_guards_compiler": "NURSE owns read-only deterministic queries, permissions, four guard layers, and compilation."
+  },
+  "reproduction": {
+    "adapter_status": "not implemented by task 10.1",
+    "credentials_read_during_audit": false,
+    "external_checkout_required": false,
+    "global_profile_required": false,
+    "hermes_install_required": false,
+    "network_calls_during_audit": 0,
+    "package_initializer": "eager compatibility imports are present; invocation is not approved"
+  },
+  "schema_version": "nurse.v2.hermes-runtime-audit/1",
+  "upstream": {
+    "commit": "8c8193dce5faf71d80bf98eb52bd896ee7be8a27",
+    "license": "MIT",
+    "name": "HERMES Agent",
+    "repository": "https://github.com/nousresearch/hermes-agent",
+    "upstream_license_sha256": "e29dfaf6905a8d396a58ea4bd84ad27057756bbd9599b5bec0971ae34d2a2118",
+    "vendored_license_note": "The vendored license is text-identical to upstream after CRLF-to-LF normalization. Both byte-level hashes are recorded explicitly.",
+    "vendored_license_sha256": "821556e6336796450ab852d375117b48a4887e71d255794fd6318d99982a5ab6",
+    "version": "0.20.5"
+  },
+  "validation": {
+    "a0_manifest_path": "configs/v2/a0_frozen_manifest.json",
+    "evidence_scope": "Audit-time upstream checkout comparison plus reproducible offline relationships; not agent behavior, network isolation, or performance proof.",
+    "frozen_runtime_paths": [
+      "third_party/hermes_runtime/CHANGES.md",
+      "third_party/hermes_runtime/INVENTORY.md",
+      "third_party/hermes_runtime/LICENSE",
+      "third_party/hermes_runtime/README.md",
+      "third_party/hermes_runtime/SOURCE_MANIFEST.json",
+      "third_party/hermes_runtime/UPSTREAM.md",
+      "third_party/hermes_runtime/hermes_runtime/__init__.py",
+      "third_party/hermes_runtime/hermes_runtime/bounded_response.py",
+      "third_party/hermes_runtime/hermes_runtime/contracts.py",
+      "third_party/hermes_runtime/hermes_runtime/errors.py",
+      "third_party/hermes_runtime/hermes_runtime/loop.py",
+      "third_party/hermes_runtime/hermes_runtime/redaction.py",
+      "third_party/hermes_runtime/hermes_runtime/repair.py",
+      "third_party/hermes_runtime/hermes_runtime/retry.py",
+      "third_party/hermes_runtime/hermes_runtime/runtime.py",
+      "third_party/hermes_runtime/hermes_runtime/tool_messages.py",
+      "third_party/hermes_runtime/hermes_runtime/transport.py",
+      "third_party/hermes_runtime/hermes_runtime/usage.py"
+    ],
+    "report_path": "docs/hermes_v2_runtime_audit.md",
+    "test_path": "tests/test_v2_hermes_runtime_audit.py",
+    "upstream_source_files_matched": 11
+  }
+}
