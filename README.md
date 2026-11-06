@@ -14,6 +14,7 @@ The core exposes the computations behind its evidence and scores. Investigation 
   - [Run a prepared incident](#run-a-prepared-incident)
   - [Inspect the outputs](#inspect-the-outputs)
 - [Reproducibility](#reproducibility)
+- [Path accuracy](#path-accuracy)
 - [Datasets](#datasets)
 - [Repository layout](#repository-layout)
 - [Paper and citation](#paper-and-citation)
@@ -75,7 +76,7 @@ export PYTHONDONTWRITEBYTECODE=1
 export PYTHONPATH=src:third_party/hermes_runtime
 ```
 
-The process must be able to apply limits of 8 GiB address space, 64 MiB stack, and 4,096 file descriptors. The synthetic test harness also needs a writable `/tmp`.
+The process must be able to apply limits of 8 GiB address space, 64 MiB stack, and 4,096 file descriptors. The software test harness also needs a writable `/tmp`.
 
 ## How to use
 
@@ -90,7 +91,7 @@ NURSE operates on a **prepared incident with explicitly bound data sources**, ra
 
 The entry point consumes a canonical JSON composition plan with schema `nurse.v2.gplus-one-case-composition/2`, represented by [`GplusFocusedCompositionPlan`](src/nurse_rcl/v2/live/ops_sre_gplus_case.py). It references a pinned `core-only` plan using profile `v2-ops-isolated/2`. The investigation profile is `v2-ops-sre/15`, configured in [`ops_sre_focused_profile.json`](configs/v2/ops_sre_focused_profile.json).
 
-The underlying schemas are [`RepairCaseInput`](src/nurse_rcl/v2/live/repair_stage.py) for case inputs and [`OpsSinglePlan`](src/nurse_rcl/v2/live/ops_plan.py) for the core plan. The [quick-start guide](docs/nurse_final_focused_quickstart.md) describes their preparation and admission requirements. The repository includes synthetic test fixtures; it does not include a ready-to-run plan for a real incident.
+The underlying schemas are [`RepairCaseInput`](src/nurse_rcl/v2/live/repair_stage.py) for case inputs and [`OpsSinglePlan`](src/nurse_rcl/v2/live/ops_plan.py) for the core plan. The [quick-start guide](docs/nurse_final_focused_quickstart.md) describes their preparation and admission requirements. Prepare an incident-specific plan before execution.
 
 ### Try the software without an API key
 
@@ -100,7 +101,7 @@ Inspect the command-line interface:
 python -m nurse_rcl.v2.live.ops_sre_gplus_case --help
 ```
 
-Then exercise evidence navigation, source comparisons, and G+ binding with synthetic inputs:
+Then run the software checks for evidence navigation, source comparisons, and G+ binding:
 
 ```bash
 python scripts/dev/run_final_explainability_0ark.py -q --tb=short \
@@ -110,11 +111,11 @@ python scripts/dev/run_final_explainability_0ark.py -q --tb=short \
   tests/test_v2_live_sre_gplus_contract.py
 ```
 
-The expected outcome is a successful pytest summary with no failures. The wrapper blocks network access and real credential loading; it does not send LLM requests. These tests exercise software behavior on synthetic data, rather than report benchmark localization accuracy.
+The expected outcome is a successful pytest summary with no failures. The wrapper blocks network access and real credential loading; it does not send LLM requests. These tests check software behavior and do not measure benchmark localization accuracy.
 
 ### Run a prepared incident
 
-The current live backend uses the ARK chat-completions provider. Its endpoint and model are fixed by the provider contract and the focused profile. The live entry uses deployment-specific credential and lock paths declared as `KEY_PATH` and `LOCK_PATH` in [`ops_provider.py`](src/nurse_rcl/v2/live/ops_provider.py). For another Linux deployment, update those locations before generating the code-pinned plans. The credential file must contain one `ARK_API_KEY2` assignment and have permission mode `0600`. The lock location must be writable. Credentials are not needed for the synthetic checks above.
+The current live backend uses the ARK chat-completions provider. Its endpoint and model are fixed by the provider contract and the focused profile. The live entry uses deployment-specific credential and lock paths declared as `KEY_PATH` and `LOCK_PATH` in [`ops_provider.py`](src/nurse_rcl/v2/live/ops_provider.py). For another Linux deployment, update those locations before generating the code-pinned plans. The credential file must contain one `ARK_API_KEY2` assignment and have permission mode `0600`. The lock location must be writable. Credentials are not needed for the software checks above.
 
 For a prepared incident, set `COMPOSITION_PLAN` to the absolute path of your canonical plan and `COMPOSITION_SHA256` to its SHA-256 digest. First check its metadata and dependencies:
 
@@ -160,6 +161,8 @@ The composition writes the deterministic core under `core-results/` and the deri
 | `investigation/` within the investigation case directory | Investigation state, decisions, actions, and acquired observations. |
 | `gplus-report/report.md` | The human-readable incident account. |
 | `gplus-report/evidence.md` | The report's evidence appendix. |
+| `gplus-report/predicted-paths.json` | The complete model-predicted path collection, source pins, and evidence audit. |
+| `gplus-report/predicted-paths.md` | A readable view of the same path hypotheses. |
 | `gplus-report/context.json` and `references.json` | Retained context and available evidence references. |
 | `gplus-report/result.json` | Report completion state, provenance checks, and `semantic_certified` status. |
 
@@ -185,6 +188,22 @@ The [Software verification workflow](.github/workflows/software-verification.yml
 
 Benchmark reproduction additionally requires the original datasets, exact case selection, prepared inputs, configuration and code hashes, and evaluation records. Ground-truth labels remain separate from inference inputs. A software test pass or a completed single-case workflow does not establish aggregate ranking accuracy or certify the semantics of an LLM-generated report.
 
+## Path accuracy
+
+New reports explicitly propose complete service paths from candidate roots to symptoms. The path collection supports multiple roots, paths longer than two hops, and marked inferred edges, while preserving the frozen core ranking. Paths remain available for evaluation even when their evidence annotations or factual report prose are rejected. Older saved reports remain readable without adding a fabricated prediction collection.
+
+The offline calculator implements mABC's Root Cause Path Accuracy, `PA = (Pc - 0.2 * Pi) / Pt`, using complete service-sequence matching and retaining negative values. It requires an independently supplied reference set. A valid explicit abstention differs from a missing or damaged output.
+
+Evaluate a prediction export against an independently prepared reference file:
+
+```bash
+python -m nurse_rcl.evaluation.path_accuracy \
+  --predictions PREDICTIONS_JSON \
+  --reference REFERENCE_JSON
+```
+
+Replace the named placeholders with file paths. See the [path accuracy guide](docs/path_accuracy.md) for the output and reference contracts, failure handling, and aggregation.
+
 ## Datasets
 
 The source includes adapters selected by the identifiers `rcabench` and `aiops25`. Obtain the corresponding original data releases separately and prepare them using the declared adapter and input contracts. Raw telemetry, private identity mappings, answer keys, and real-run artifacts are not bundled with this repository. Dataset use remains subject to the original release terms.
@@ -195,11 +214,11 @@ The source includes adapters selected by the identifiers `rcabench` and `aiops25
 NURSE/
   configs/                    Registered execution and investigation profiles
   docs/                       Workflow and tool documentation
-  scripts/dev/                Execution and synthetic verification wrappers
+  scripts/dev/                Execution and software verification wrappers
   src/nurse_rcl/              Localization, evidence processing, and reporting
     v2/live/                  Current focused investigation and G+ entry points
     v2/live/ops_skills/        Registered investigation skill contracts
-  tests/                      Synthetic tests and fixtures
+  tests/                      Software tests and fixtures
   third_party/hermes_runtime/  Bundled HERMES-derived runtime
   pyproject.toml              Package metadata and dependencies
   uv.lock                     Locked dependency versions
@@ -215,4 +234,4 @@ NURSE is associated with ongoing work on interpretable evidence and explainable 
 
 The NURSE implementation is released under the [MIT License](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the bundled runtime and its licensing information.
 
-For usage questions and bug reports, open an [issue](https://github.com/molujia/NURSE/issues) with the commit hash, Python version, command, and a minimal synthetic example that reproduces the problem.
+For usage questions and bug reports, open an [issue](https://github.com/molujia/NURSE/issues) with the commit hash, Python version, command, and minimal reproduction steps.

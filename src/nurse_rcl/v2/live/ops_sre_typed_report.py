@@ -36,6 +36,7 @@ from nurse_rcl.v2.live.ops_sre_typed_report_contract import (
     TYPED_REPORT_INPUT,
     TYPED_REPORT_PROTOCOL,
     TYPED_REPORT_VIEW,
+    typed_policy_for_output_schema,
     typed_report_policy,
 )
 
@@ -60,7 +61,7 @@ def _wire_catalog(supply: dict[str, Any], store: NativeFactStore) -> dict[str, A
 
 
 def _request(body: dict[str, Any]) -> bytes:
-    policy = typed_report_policy()
+    policy = typed_policy_for_output_schema(body.get("output_schema"))
     exchange = prepare_exchange(
         model=ARK_MODEL,
         max_output_tokens=policy["max_tokens"],
@@ -181,12 +182,10 @@ def typed_report_body(
         raise TypeError("typed report wire requires exact bytes")
     payload = decode_json_object(raw, REPORT_LIMITS)
     base = {k: v for k, v in payload.items() if k != "thinking"}
-    policy = typed_report_policy()
     if (
         payload.get("thinking") != {"type": "disabled"}
         or _validate_payload(base) is not None
         or base["model"] != ARK_MODEL
-        or base["max_tokens"] != policy["max_tokens"]
         or base["temperature"] != 0
         or encode_json(payload, REPORT_LIMITS) != raw
     ):
@@ -194,11 +193,15 @@ def typed_report_body(
     messages = base["messages"]
     if (
         len(messages) != 2
-        or messages[0] != dict(role="system", content=policy["system"])
         or messages[1]["role"] != "user"
     ):
         raise ValueError("typed report active contract differs")
     body = decode_json_object(messages[1]["content"].encode(), REPORT_LIMITS)
+    policy = typed_policy_for_output_schema(body.get("output_schema"))
+    if base["max_tokens"] != policy["max_tokens"] or messages[0] != dict(
+        role="system", content=policy["system"]
+    ):
+        raise ValueError("typed report active contract differs")
     if (
         set(body)
         != {
@@ -256,7 +259,10 @@ def typed_report_body(
         body["case_snapshot_id"],
     ):
         raise ValueError("typed report case identity differs")
-    return dict(body, context=metadata), store
+    return dict(
+        body, context=metadata,
+        response_schema=policy["response_schema"]["properties"]["schema_version"]["const"],
+    ), store
 
 
 def project_typed_report(
@@ -360,6 +366,6 @@ def bind_typed_report(raw: bytes) -> LiveRequestBinding:
         phase="report",
         input_sha256=header["core_result_digest"],
         context_sha256=body["context_sha256"],
-        prompt_schema_sha256=typed_report_policy()["prompt_sha256"],
+        prompt_schema_sha256=typed_policy_for_output_schema(body["output_schema"])["prompt_sha256"],
         request_sha256=sha256_hex(raw),
     )

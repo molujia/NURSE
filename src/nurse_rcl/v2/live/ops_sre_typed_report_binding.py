@@ -20,7 +20,6 @@ from nurse_rcl.v2.live.ops_sre_atomic_report_expressions import (
 from nurse_rcl.v2.live.ops_sre_fact_store import NativeFactStore
 from nurse_rcl.v2.live.ops_sre_typed_report_contract import (
     SECTIONS,
-    TYPED_REPORT_RESPONSE,
     parse_typed_response,
 )
 
@@ -107,6 +106,7 @@ def bind_typed_response(
     request_sha256: str,
     catalog_sha256: str,
     response_origin: dict[str, Any] | None,
+    expected_schema: str | None = None,
 ) -> tuple[dict[str, Any], bytes]:
     """Admit the exact received selection; preserve all native explanations unchanged.
 
@@ -126,7 +126,7 @@ def bind_typed_response(
     )
     if type(response_origin) is not dict or response_origin != expected_origin:
         raise ValueError("typed response origin differs")
-    response = parse_typed_response(raw)
+    response = parse_typed_response(raw, expected_schema=expected_schema)
     native = response.model_dump(mode="json")
     by_ref = {row["expression"]["expression_ref"]: row for row in catalog["rows"]}
     steps = {row["step_ref"] for row in supply["steps"]}
@@ -182,7 +182,7 @@ def bind_typed_response(
     checked = resolve_expression_response(encode_json(internal, REPORT_LIMITS), supply, store)
     receipt = dict(
         schema_version=TYPED_RECEIPT,
-        native_schema=TYPED_REPORT_RESPONSE,
+        native_schema=response.schema_version,
         origin=deepcopy(expected_origin),
         core_result_digest=supply["core_result_digest"],
         source_scope_sha256=catalog["source_scope_sha256"],
@@ -193,5 +193,11 @@ def bind_typed_response(
         legacy_assertions_authority="program_expansion",
         companion_authority="constraints_not_independent_evidence_votes",
     )
+    if "predicted_paths" in native:
+        receipt.update(
+            schema_version="nurse.v2.sre-typed-report-binding/2",
+            predicted_paths=deepcopy(native["predicted_paths"]),
+            path_abstention_reason=native["path_abstention_reason"],
+        )
     encode_json(receipt, REPORT_LIMITS)
     return receipt, checked

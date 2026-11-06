@@ -25,13 +25,17 @@ from nurse_rcl.v2.live.ops_sre_brief_report import (
     encode_brief_report_storage,
     validate_brief_report,
 )
-from nurse_rcl.v2.live.ops_sre_gplus_contract import bind_gplus_response
+from nurse_rcl.v2.live.ops_sre_gplus_contract import GPLUS_PATH_RESPONSE, bind_gplus_response
 from nurse_rcl.v2.live.ops_sre_gplus_provider import GplusDelivery, read_gplus_delivery
 from nurse_rcl.v2.live.ops_sre_gplus_report import gplus_report_body, project_gplus_report
 from nurse_rcl.v2.live.ops_sre_model_view import _book, _prefix
 from nurse_rcl.v2.live.ops_sre_references import _translate
 from nurse_rcl.v2.live.ops_sre_report_check_policy import parse_checked_brief, response_admission
 from nurse_rcl.v2.live.ops_sre_typed_report_provider import _durable
+from nurse_rcl.v2.live.report_path_predictions import (
+    build_prediction_export,
+    render_prediction_export,
+)
 
 
 def _members(root: Path) -> list[dict[str, Any]]:
@@ -56,6 +60,58 @@ def _save(root: Path, state: dict[str, Any]) -> dict[str, Any]:
     return value
 
 
+def _prediction_outputs(
+    context: BriefSreReportContext, references: dict[str, Any],
+    wire: bytes | None, native: bytes | None,
+) -> dict[str, bytes]:
+    """Read only the actual supplied store; never use the private core to fill edges."""
+    expected_schema = GPLUS_PATH_RESPONSE
+    visible: tuple[str, ...] = ()
+    relations: dict[str, list[tuple[str, str]]] = {}
+    if wire is not None:
+        body, store = gplus_report_body(wire)
+        expected_schema = body["response_schema"]
+        if expected_schema != GPLUS_PATH_RESPONSE:
+            return {}
+        visible = store.refs()
+        for item in store.iter_facts():
+            fields = {v.name: v.value for v in item.fact.values}
+            if fields.get("observation_state") != "observed":
+                continue
+            caller, callee = fields.get("caller_service_key"), fields.get("callee_service_key")
+            if type(caller) is not str or type(callee) is not str:
+                continue
+            relation = (fields.get("relation_type"), fields.get("direction"))
+            if relation in {
+                ("service_call", "caller_to_callee"),
+                ("received_dependency_failure", "callee_to_caller"),
+            }:
+                relations[item.fact.fact_ref] = [(callee, caller)]
+            elif relation == ("caller_load_transmission", "caller_to_callee"):
+                relations[item.fact.fact_ref] = [(caller, callee)]
+    _, book = _prefix(_book(references, context.metadata.evidence.case_snapshot_id), 9)
+    aliases = {handle: original for kind, handle, original, _ in book.to_state()["entries"]
+               if kind == "service"}
+    export = build_prediction_export(
+        native,
+        opaque_case_id=context.metadata.evidence.opaque_case_id,
+        core_result_digest=context.core_result_digest,
+        context_sha256=context.context_sha256,
+        request_sha256=sha256_hex(wire) if wire is not None else None,
+        service_aliases=aliases,
+        known_service_keys=tuple(
+            r.candidate_service_key for r in context.metadata.evidence.ranking
+        ),
+        visible_evidence_refs=visible,
+        observed_relations=relations,
+        expected_schema=expected_schema,
+    )
+    return {
+        "predicted-paths.json": canonical_json_bytes(export),
+        "predicted-paths.md": render_prediction_export(export).encode(),
+    }
+
+
 def _evaluate(
     context: BriefSreReportContext, references: dict[str, Any], wire: bytes, delivery: GplusDelivery
 ) -> dict[str, bytes]:
@@ -67,6 +123,7 @@ def _evaluate(
         request_sha256=sha256_hex(wire),
         graph_sha256=body["graph_sha256"],
         graph_representation=body["graph_representation"],
+        expected_schema=body["response_schema"],
         response_origin=dict(
             request_sha256=delivery.origin["request_sha256"],
             graph_sha256=body["graph_sha256"],
@@ -98,12 +155,14 @@ def _evaluate(
         "\n\n程序限定：G+ 来源、字段与上游闭包为程序绑定；"
         "模型原生解释保持未认证，绑定成功不等于根因正确。\n"
     )
+    predictions = _prediction_outputs(context, references, wire, delivery.native)
+    path_text = "\n\n" + predictions["predicted-paths.md"].decode() if predictions else ""
     return {
         "binding.json": canonical_json_bytes(receipt),
         "checked-short.json": short,
         "resolved.json": resolved,
         "checks.json": checks,
-        "report.md": (pair["report"] + note).encode(),
+        "report.md": (pair["report"] + note + path_text).encode(),
         "evidence.md": (pair["evidence"] + note).encode(),
     }
 
@@ -137,7 +196,7 @@ def run_gplus_report(
     _durable(root / "context.json", encode_brief_report_storage(context))
     _durable(root / "references.json", canonical_json_bytes(working))
     state = dict(
-        schema_version="nurse.v2.sre-gplus-report-run/2",
+        schema_version="nurse.v2.sre-gplus-report-run/3",
         code_sha256=code_sha256,
         execution_sha256=execution_sha256,
         context_sha256=context.context_sha256,
@@ -152,6 +211,8 @@ def run_gplus_report(
         preparation_load_imports=0,
     )
     if projection.wire_bytes is None:
+        for name, raw in _prediction_outputs(context, working, None, None).items():
+            _durable(root / name, raw)
         detail = getattr(projection, "failure_detail", None)
         state.update(
             status="unavailable",
@@ -180,6 +241,8 @@ def run_gplus_report(
         _durable(root / "native.bin", actual.native)
         _durable(root / "delivery-origin.json", canonical_json_bytes(actual.origin))
     except Exception as exc:
+        for name, raw in _prediction_outputs(context, working, wire, None).items():
+            _durable(root / name, raw)
         state.update(
             status="unavailable",
             failure_type=type(exc).__name__,
@@ -187,6 +250,10 @@ def run_gplus_report(
         )
         return _save(root, state)
     try:
+        # Independent of six-section prose admission: even a rejected narrative
+        # retains every recognizable model prediction for external evaluation.
+        for name, raw in _prediction_outputs(context, working, wire, actual.native).items():
+            _durable(root / name, raw)
         outputs = _evaluate(context, working, wire, actual)
         for name, raw in outputs.items():
             _durable(root / name, raw)
@@ -221,6 +288,7 @@ def inspect_gplus_report(
         not in {
             "nurse.v2.sre-gplus-report-run/1",
             "nurse.v2.sre-gplus-report-run/2",
+            "nurse.v2.sre-gplus-report-run/3",
         }
         or state["state_sha256"] != sha256_hex(canonical_json_bytes(unsigned))
         or canonical_json_bytes(state) != state_raw
@@ -246,7 +314,8 @@ def inspect_gplus_report(
         "members",
         "state_sha256",
     }
-    new_version = state["schema_version"] == "nurse.v2.sre-gplus-report-run/2"
+    new_version = state["schema_version"] != "nurse.v2.sre-gplus-report-run/1"
+    path_version = state["schema_version"] == "nurse.v2.sre-gplus-report-run/3"
     if set(state) != base_fields | ({"failure_detail"} if new_version else set()):
         raise ValueError("G+ saved diagnostic schema differs")
     if new_version and state["failure_detail"] is not None:
@@ -270,14 +339,24 @@ def inspect_gplus_report(
     if state["request_sha256"] is None:
         if state["status"] != "unavailable" or state["call_started"]:
             raise ValueError("G+ missing request owner differs")
+        if path_version:
+            for name, raw in _prediction_outputs(context, references, None, None).items():
+                if (root / name).read_bytes() != raw:
+                    raise ValueError("G+ saved path prediction export differs")
         return state
     wire = (root / "request.bin").read_bytes()
     body, _ = gplus_report_body(wire, references=references)
     if (
         sha256_hex(wire) != state["request_sha256"]
         or body["context_sha256"] != expected_context_sha256
+        or path_version != (body["response_schema"] == GPLUS_PATH_RESPONSE)
     ):
         raise ValueError("G+ saved request differs")
+    if path_version and state["status"] != "pending":
+        native = (root / "native.bin").read_bytes() if (root / "native.bin").exists() else None
+        for name, raw in _prediction_outputs(context, references, wire, native).items():
+            if (root / name).read_bytes() != raw:
+                raise ValueError("G+ saved path prediction export differs")
     if (root / "native.bin").exists():
         actual = read_gplus_delivery(
             root=root / "provider",

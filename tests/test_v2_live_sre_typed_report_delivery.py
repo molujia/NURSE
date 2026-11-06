@@ -10,7 +10,6 @@ import pytest
 
 from nurse_rcl.agents.ark import (
     ARK_CHAT_COMPLETIONS_URL,
-    ARK_MODEL,
     ArkChatCompletionsClient,
     ArkCredential,
     ArkSettings,
@@ -131,11 +130,16 @@ def recorder(module, path, wire, handler):
     )
 
 
+def current_wire():
+    from tests.test_v2_live_sre_typed_report_wire import projected
+
+    return projected()[3].wire_bytes
+
+
 def test_actual_original_client_bytes_and_unredacted_native_are_durable():
     module = api()
     path = root()
-    request = dict(model=ARK_MODEL, messages=[dict(role="user", content="独立装置")])
-    wire = json.dumps(request, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    wire = current_wire()
     native = '  {"text":"原样  双空格"}\n'
     raw = body(outer(native))
     seen = []
@@ -164,7 +168,7 @@ def test_actual_original_client_bytes_and_unredacted_native_are_durable():
 def test_transport_rejects_byte_drift_before_dispatch_not_dict_equivalence():
     module = api()
     path = root()
-    wire = b'{"model":"' + ARK_MODEL.encode() + b'"}'
+    wire = current_wire()
     sent = []
     transport = recorder(module, path, wire, lambda r: sent.append(r))
     with pytest.raises(ValueError, match="wire"):
@@ -177,7 +181,7 @@ def test_transport_rejects_byte_drift_before_dispatch_not_dict_equivalence():
 def test_replay_capture_directory_is_rejected():
     module = api()
     path = root()
-    wire = json.dumps(dict(model=ARK_MODEL)).encode()
+    wire = current_wire()
     recorder(module, path, wire, lambda _: None).close()
     with pytest.raises(FileExistsError):
         recorder(module, path, wire, lambda _: None)

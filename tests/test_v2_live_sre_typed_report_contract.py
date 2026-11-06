@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import pytest
 
-from tests.sre_typed_report_fixtures import NATIVE_SCHEMA, SECTIONS, api, empty_native, native, raw
+from tests.sre_typed_report_fixtures import SECTIONS, api, empty_native, native, raw
 
 
 def test_policy_has_one_active_contract_without_inherited_output_override():
@@ -13,11 +13,13 @@ def test_policy_has_one_active_contract_without_inherited_output_override():
     assert policy["protocol"] == "nurse.v2.sre-typed-report-exchange/1"
     assert policy["profile"] == "hermes-sre-typed-report/1"
     assert policy["schema"] == "nurse.v2.atomic-typed-report-input/1"
-    assert NATIVE_SCHEMA in policy["system"]
+    assert contract.TYPED_PATH_REPORT_RESPONSE in policy["system"]
     assert "OUTPUT OVERRIDE" not in policy["system"]
     assert "nurse.v2.atomic-report-expression-response/3" not in policy["system"]
     assert "nurse.v2.sre-report-response/4" not in policy["system"]
-    assert set(policy["response_schema"]["properties"]) == {"schema_version", *SECTIONS}
+    assert set(policy["response_schema"]["properties"]) == {
+        "schema_version", *SECTIONS, "predicted_paths", "path_abstention_reason"
+    }
     assert policy["max_tokens"] == 65536
 
 

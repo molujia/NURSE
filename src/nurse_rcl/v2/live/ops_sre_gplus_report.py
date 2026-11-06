@@ -34,6 +34,7 @@ from nurse_rcl.v2.live.ops_sre_gplus_contract import (
     GPLUS_VARIANT,
     GPLUS_VIEW,
     GPLUS_VIEW_TABLES,
+    gplus_policy_for_output_schema,
     gplus_report_policy,
 )
 from nurse_rcl.v2.live.ops_sre_gplus_graph import build_gplus_graph, gplus_graph_facts
@@ -51,7 +52,7 @@ if TYPE_CHECKING:
 
 
 def _request(body: dict[str, Any]) -> bytes:
-    policy = gplus_report_policy()
+    policy = gplus_policy_for_output_schema(body.get("output_schema"))
     exchange = prepare_exchange(
         model=ARK_MODEL,
         max_output_tokens=policy["max_tokens"],
@@ -77,21 +78,23 @@ def gplus_report_body(
     payload = decode_json_object(raw, REPORT_LIMITS)
     base = {k: v for k, v in payload.items() if k != "thinking"}
     messages = payload.get("messages")
-    policy = gplus_report_policy()
     if (
         payload.get("thinking") != {"type": "disabled"}
         or _validate_payload(base) is not None
         or base["model"] != ARK_MODEL
-        or base["max_tokens"] != policy["max_tokens"]
         or base["temperature"] != 0
         or encode_json(payload, REPORT_LIMITS) != raw
         or type(messages) is not list
         or len(messages) != 2
-        or messages[0] != dict(role="system", content=policy["system"])
         or messages[1].get("role") != "user"
     ):
         raise ValueError("G+ single active contract differs")
     body = decode_json_object(messages[1]["content"].encode(), REPORT_LIMITS)
+    policy = gplus_policy_for_output_schema(body.get("output_schema"))
+    if base["max_tokens"] != policy["max_tokens"] or messages[0] != dict(
+        role="system", content=policy["system"]
+    ):
+        raise ValueError("G+ single active contract differs")
     if (
         set(body)
         != {
@@ -155,6 +158,7 @@ def gplus_report_body(
         context=admitted,
         graph_sha256=sha256_hex(canonical_json_bytes(graph)),
         graph_representation=representation,
+        response_schema=policy["response_schema"]["properties"]["schema_version"]["const"],
     ), original_store
 
 
@@ -264,6 +268,6 @@ def bind_gplus_report(raw: bytes) -> LiveRequestBinding:
         phase="report",
         input_sha256=header["core_result_digest"],
         context_sha256=body["context_sha256"],
-        prompt_schema_sha256=gplus_report_policy()["prompt_sha256"],
+        prompt_schema_sha256=gplus_policy_for_output_schema(body["output_schema"])["prompt_sha256"],
         request_sha256=sha256_hex(raw),
     )

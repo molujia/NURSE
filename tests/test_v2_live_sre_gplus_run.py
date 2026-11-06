@@ -46,7 +46,9 @@ def response(wire):
     ref = expression["claim"]["evidence_refs"][0]
     field = catalog["sources"][ref]["fields"][0]["field"]
     value = dict(
-        schema_version="nurse.v2.atomic-gplus-report-expression-response/1",
+        schema_version="nurse.v2.atomic-gplus-report-expression-response/2",
+        predicted_paths=[],
+        path_abstention_reason="The supplied evidence does not support a path prediction.",
         executive_summary=[],
         formal_interpretations=[],
         step_findings={},
@@ -240,7 +242,7 @@ def test_presend_resource_detail_is_saved_and_fresh_read_without_callback(tmp_pa
         complete=forbidden,
     )
     assert state["status"] == "unavailable" and state["call_started"] is False
-    assert state["schema_version"] == "nurse.v2.sre-gplus-report-run/2"
+    assert state["schema_version"] == "nurse.v2.sre-gplus-report-run/3"
     assert state["failure_detail"] == detail.model_dump(mode="json")
     before = {p.name: p.read_bytes() for p in root.iterdir()}
     assert (

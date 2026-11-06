@@ -47,7 +47,7 @@ jobs:
           uv sync --locked --python 3.11 --extra test
       - name: Check the documented entry point
         run: .venv/bin/python -m nurse_rcl.v2.live.ops_sre_gplus_case --help
-      - name: Run the 45-file synthetic verification suite
+      - name: Run the 45-file software verification suite
         shell: bash
         run: |
           set -euo pipefail

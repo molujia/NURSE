@@ -22,7 +22,12 @@ from nurse_rcl.v2.live.ops_sre_typed_report_binding import (
     bind_typed_response,
     typed_expression_catalog,
 )
-from nurse_rcl.v2.live.ops_sre_typed_report_contract import SECTIONS, TypedReportResponse
+from nurse_rcl.v2.live.ops_sre_typed_report_contract import (
+    SECTIONS,
+    TypedPathReportResponse,
+    TypedReportResponse,
+)
+from nurse_rcl.v2.live.report_path_predictions import prediction_prompt
 
 GPLUS_PROTOCOL: Literal["nurse.v2.sre-gplus-report-exchange/1"] = (
     "nurse.v2.sre-gplus-report-exchange/1"
@@ -33,6 +38,7 @@ GPLUS_VIEW = "nurse.v2.sre-gplus-report-view/1"
 GPLUS_INPUT_TABLES = "nurse.v2.atomic-gplus-report-input/2"
 GPLUS_VIEW_TABLES = "nurse.v2.sre-gplus-report-view/2"
 GPLUS_RESPONSE = "nurse.v2.atomic-gplus-report-expression-response/1"
+GPLUS_PATH_RESPONSE = "nurse.v2.atomic-gplus-report-expression-response/2"
 
 
 class GplusReportResponse(TypedReportResponse):
@@ -47,19 +53,41 @@ class GplusReportResponse(TypedReportResponse):
         return self
 
 
-def parse_gplus_response(raw: bytes) -> GplusReportResponse:
+class GplusPathReportResponse(TypedPathReportResponse):
+    schema_version: Literal["nurse.v2.atomic-gplus-report-expression-response/2"]  # type: ignore[assignment]
+
+    @model_validator(mode="after")
+    def declared_primary_basis(self) -> Self:
+        claims = [c for s in SECTIONS if s != "step_findings" for c in getattr(self, s)]
+        claims.extend(c for step in self.step_findings.values() for c in step)
+        if any(not c.primary_fields or not c.surface_text.strip() for c in claims):
+            raise ValueError("G+ choice requires declared primary fields and native text")
+        return self
+
+
+def parse_gplus_response(
+    raw: bytes, *, expected_schema: str | None = None,
+) -> GplusReportResponse | GplusPathReportResponse:
     if type(raw) is not bytes:
         raise TypeError("G+ native requires original bytes")
     value = decode_json_object(raw, REPORT_LIMITS)
+    schema = value.get("schema_version")
+    if schema not in {GPLUS_RESPONSE, GPLUS_PATH_RESPONSE} or (
+        expected_schema is not None and schema != expected_schema
+    ):
+        raise ExchangeBoundaryError("sre_gplus_native_schema")
+    model = GplusPathReportResponse if schema == GPLUS_PATH_RESPONSE else GplusReportResponse
     try:
-        return GplusReportResponse.model_validate_json(
+        return model.model_validate_json(
             encode_json(value, REPORT_LIMITS), strict=True
         )
     except ValidationError:
         raise ExchangeBoundaryError("sre_gplus_native_schema") from None
 
 
-def gplus_report_policy() -> dict[str, Any]:
+def gplus_report_policy(*, response_schema: str = GPLUS_PATH_RESPONSE) -> dict[str, Any]:
+    if response_schema not in {GPLUS_RESPONSE, GPLUS_PATH_RESPONSE}:
+        raise ValueError("unsupported G+ report response contract")
     system = (
         "You are NURSE's read-only SRE report interpreter using G+ evidence closure. "
         "Return one bare JSON object matching output_schema, no fences or extra text. "
@@ -91,7 +119,11 @@ def gplus_report_policy() -> dict[str, Any]:
         "Do not execute tools, production changes or disclose hidden reasoning. Mechanical "
         "acceptance binds sources, never certifies your original natural-language explanation."
     )
-    schema = GplusReportResponse.model_json_schema()
+    model: type[TypedReportResponse] = GplusReportResponse
+    if response_schema == GPLUS_PATH_RESPONSE:
+        system += prediction_prompt()
+        model = GplusPathReportResponse
+    schema = model.model_json_schema()
     pinned = dict(
         protocol=GPLUS_PROTOCOL,
         system=system,
@@ -107,6 +139,15 @@ def gplus_report_policy() -> dict[str, Any]:
     )
 
 
+def gplus_policy_for_output_schema(output_schema: object) -> dict[str, Any]:
+    """Old wire replay uses its original exact contract, never today's default."""
+    for version in (GPLUS_PATH_RESPONSE, GPLUS_RESPONSE):
+        policy = gplus_report_policy(response_schema=version)
+        if output_schema == policy["output_schema"]:
+            return policy
+    raise ValueError("G+ report output schema is not registered")
+
+
 def bind_gplus_response(
     raw: bytes,
     supply: dict[str, Any],
@@ -116,6 +157,7 @@ def bind_gplus_response(
     graph_sha256: str,
     response_origin: dict[str, Any] | None,
     graph_representation: str = "expanded",
+    expected_schema: str | None = None,
 ) -> tuple[dict[str, Any], bytes]:
     for pin in (request_sha256, graph_sha256):
         require_pin(pin)
@@ -130,7 +172,7 @@ def bind_gplus_response(
     )
     if response_origin != expected:
         raise ValueError("G+ actual native/request origin differs")
-    response = parse_gplus_response(raw)
+    response = parse_gplus_response(raw, expected_schema=expected_schema)
     logical_graph = expand_gplus_graph(graph)
     leaves = {(c["expression_ref"], c["section"], c["step_ref"]): c
               for c in logical_graph["choices"]}
@@ -149,6 +191,8 @@ def bind_gplus_response(
                 closures[selected.claim_id] = gplus_closure(logical_graph, choice["leaf_id"])
     # Explicit internal program adapter only; raw remains the original G+ version.
     adapted = response.model_dump(mode="json")
+    predictions = {k: adapted.pop(k) for k in ("predicted_paths", "path_abstention_reason")
+                   if k in adapted}
     adapted["schema_version"] = "nurse.v2.atomic-typed-report-expression-response/1"
     internal = encode_json(adapted, REPORT_LIMITS)
     catalog_pin = sha256_hex(canonical_json_bytes(catalog))
@@ -174,7 +218,7 @@ def bind_gplus_response(
     ]
     receipt = dict(
         schema_version="nurse.v2.sre-gplus-report-binding/1",
-        native_schema=GPLUS_RESPONSE,
+        native_schema=response.schema_version,
         origin=expected,
         native_sha256=sha256_hex(raw),
         core_result_digest=supply["core_result_digest"],
@@ -187,5 +231,7 @@ def bind_gplus_response(
         adapter_authority="program_not_model_native",
         program_adapter_sha256=sha256_hex(internal),
     )
+    if predictions:
+        receipt.update(schema_version="nurse.v2.sre-gplus-report-binding/2", **predictions)
     encode_json(receipt, REPORT_LIMITS)
     return receipt, checked

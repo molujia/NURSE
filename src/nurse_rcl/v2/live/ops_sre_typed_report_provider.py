@@ -36,6 +36,26 @@ if TYPE_CHECKING:
 PROTOCOL = "nurse.v2.sre-typed-report-exchange/1"
 
 
+def require_current_report_request(wire: bytes, *, protocol: str = PROTOCOL) -> None:
+    """Sending gate only; historical wire readers keep their registered policies."""
+    if protocol == PROTOCOL:
+        from nurse_rcl.v2.live.ops_sre_typed_report import typed_report_body
+        from nurse_rcl.v2.live.ops_sre_typed_report_contract import TYPED_PATH_REPORT_RESPONSE
+
+        body, _ = typed_report_body(wire)
+        expected_schema = TYPED_PATH_REPORT_RESPONSE
+    elif protocol == "nurse.v2.sre-gplus-report-exchange/1":
+        from nurse_rcl.v2.live.ops_sre_gplus_contract import GPLUS_PATH_RESPONSE
+        from nurse_rcl.v2.live.ops_sre_gplus_report import gplus_report_body
+
+        body, _ = gplus_report_body(wire)
+        expected_schema = GPLUS_PATH_RESPONSE
+    else:
+        raise ValueError("unregistered typed sending protocol")
+    if body["response_schema"] != expected_schema:
+        raise ValueError("new report sends require the current path-prediction contract")
+
+
 class TypedReportReceiptError(RuntimeError):
     """A retained outer receipt is unusable; never a retryable parsing error."""
 
@@ -197,7 +217,7 @@ class TypedReportTransport(httpx.BaseTransport):
         self.protocol = protocol
         for pin in (code_sha256, execution_sha256):
             require_pin(pin)
-        decode_json_object(expected_wire, RESPONSE_LIMITS)
+        require_current_report_request(expected_wire, protocol=protocol)
         self.root, self.expected_wire = Path(root), expected_wire
         self.code, self.execution = code_sha256, execution_sha256
         self.root.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -222,6 +242,7 @@ class TypedReportTransport(httpx.BaseTransport):
             or request.read() != self.expected_wire
         ):
             raise ValueError("typed actual wire or destination differs")
+        require_current_report_request(request.content, protocol=self.protocol)
         self.attempts += 1
         if self.attempts > 5:
             raise ValueError("typed original five-attempt capacity exceeded")

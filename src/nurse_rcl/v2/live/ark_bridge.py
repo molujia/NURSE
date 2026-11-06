@@ -991,6 +991,7 @@ class LiveArkBridge:
         parse_usage: Callable[[bytes], AttemptUsage]
         if typed_report:
             from nurse_rcl.v2.live.ops_sre_typed_report_provider import (
+                require_current_report_request,
                 typed_attempt_usage,
             )
 
@@ -1309,6 +1310,11 @@ class LiveArkBridge:
                     raise LiveTransportError(final.record.outcome)
                 if typed_report:
                     raise LiveTransportError("typed_saved_retry_no_resend")
+
+            if typed_report:
+                # Old completed receipts remain reusable above; every new send
+                # must include the current explicit path-prediction contract.
+                require_current_report_request(payload, protocol=self.request_protocol)
 
             def reserve(number: int) -> None:
                 nonlocal ledger

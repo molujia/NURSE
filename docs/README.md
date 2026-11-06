@@ -1,7 +1,7 @@
 # NURSE documentation
 
 Start with the English [repository README](../README.md) for installation, input
-contracts, basic synthetic checks, prepared-incident execution, and output files.
+contracts, software checks, prepared-incident execution, and output files.
 
 NURSE combines deterministic root cause localization, bounded investigation, and
 G+ report bindings. The investigation preserves the original ranking while
@@ -13,8 +13,10 @@ under the SRE's control.
 - [Tool catalog (Chinese)](nurse_final_focused_tools.md): evidence navigation,
   comparisons, source attribution, and report constraints.
 - [Software verification scope](../tests/final_explainability_0ark.txt): the
-  explicit 45-file synthetic suite for the current focused workflow.
+  explicit 45-file software suite for the current focused workflow.
+- [Path accuracy](path_accuracy.md): report predictions, mABC PA calculation,
+  independent references, failure handling, and aggregation.
 - [Release manifest](../release_manifest.json): source-file hashes and the code inventory.
 
-The repository contains source and synthetic fixtures. Real telemetry, identity
+The repository contains source and software tests. Incident telemetry, identity
 mappings, API credentials, and real-run artifacts are supplied separately.

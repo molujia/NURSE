@@ -22,7 +22,7 @@ from nurse_rcl.v2.exchange_json import decode_json_object
 from nurse_rcl.v2.live.ark_bridge import LiveArkBridge, _read, read_attempt_ledger
 from nurse_rcl.v2.live.ops_empirical_policy import RESPONSE_LIMITS
 from nurse_rcl.v2.live.ops_provider import KEY_PATH, LOCK_PATH
-from nurse_rcl.v2.live.ops_sre_gplus_contract import GPLUS_PROTOCOL
+from nurse_rcl.v2.live.ops_sre_gplus_contract import GPLUS_PATH_RESPONSE, GPLUS_PROTOCOL
 from nurse_rcl.v2.live.ops_sre_gplus_report import bind_gplus_report, gplus_report_body
 from nurse_rcl.v2.live.ops_sre_typed_report_provider import (
     TypedReportTransport,
@@ -95,6 +95,8 @@ class GplusReportProvider:
         for pin in (code_sha256, execution_sha256, expected_context_sha256):
             require_pin(pin)
         body, _ = gplus_report_body(wire, references=references)
+        if body["response_schema"] != GPLUS_PATH_RESPONSE:
+            raise ValueError("G+ new sends require the current path-prediction contract")
         if body["context_sha256"] != expected_context_sha256:
             raise ValueError("G+ trusted owner context differs")
         if approved_execution_sha256 not in (None, execution_sha256):
