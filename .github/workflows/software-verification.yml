@@ -55,3 +55,8 @@ jobs:
           test "${#selected_tests[@]}" -eq 45
           .venv/bin/python scripts/dev/run_final_explainability_0ark.py \
             -q --tb=short "${selected_tests[@]}"
+      - name: Verify historical retrieval, review and ranking evaluation
+        run: |
+          .venv/bin/python -m pytest -q tests/test_semantic_history_retrieval.py \
+            tests/test_verified_history.py tests/test_history_experiment.py \
+            tests/test_verified_history_context.py

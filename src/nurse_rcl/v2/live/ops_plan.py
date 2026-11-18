@@ -46,6 +46,7 @@ from nurse_rcl.v2.live.ops_contracts import (
     OpsSreWorkingProfile,
 )
 from nurse_rcl.v2.live.ops_contracts import OpsProfile as OpsProfile
+from nurse_rcl.v2.live.ops_sre_historical_cases import HistoricalContext
 from nurse_rcl.v2.live.repair_preparation_artifacts import RepairPreparationRun
 from nurse_rcl.v2.live.repair_stage import RepairCaseInput
 from nurse_rcl.v2.live.sources import file_sha256
@@ -204,6 +205,20 @@ class OpsSinglePlan(StrictFrozenModel):
         return sha256_hex(canonical_json_bytes(self.environment))
 
 
+class OpsHistoricalStagePlan(OpsSinglePlan):
+    schema_version: Literal["nurse.v2.ops-single-plan/2"] = (
+        "nurse.v2.ops-single-plan/2"  # type: ignore[assignment]
+    )
+    historical_precedents: HistoricalContext
+
+    @model_validator(mode="after")
+    def require_focused_stage(self) -> Self:
+        if self.source_core is None or not isinstance(self.profile, OpsSreFocusedProfile):
+            raise ValueError("historical precedents require a focused stage with a frozen core")
+        self.historical_precedents.require_query(self.case.opaque_case_id)
+        return self
+
+
 @dataclass(frozen=True)
 class OpsAdmittedPlan:
     plan: OpsSinglePlan
@@ -218,7 +233,9 @@ class OpsAdmittedPlan:
 
 def read_ops_plan(path: Path, pin: str) -> OpsSinglePlan:
     raw = _pinned(path, pin)
-    _metadata(raw)  # Duplicate keys, depth and capacity before typed admission.
+    meta = _metadata(raw)  # Duplicate keys, depth and capacity before typed admission.
+    if meta.get("schema_version") == "nurse.v2.ops-single-plan/2":
+        return OpsHistoricalStagePlan.model_validate_json(raw)
     return OpsSinglePlan.model_validate_json(raw)
 
 

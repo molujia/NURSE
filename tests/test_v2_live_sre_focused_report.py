@@ -354,14 +354,16 @@ def test_readable_service_aliases_validate_actual_action_book_without_mutation(d
     assert canonical_json_bytes(references) == before
 
 
+@pytest.mark.parametrize("history_enabled", [False, True])
 def test_real_focused_composition_derives_profile15_child_from_synthetic_core(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, history_enabled
 ):
     from types import SimpleNamespace
 
     from nurse_rcl.v2.live import ops_sre_gplus_case as module
     from nurse_rcl.v2.live.ops_contracts import OpsEmpiricalProfile
     from nurse_rcl.v2.live.ops_plan import OpsSinglePlan, read_ops_plan
+    from tests.test_verified_history_context import precedents
 
     case = "opq_" + "c" * 32
     key = dict(
@@ -419,12 +421,21 @@ def test_real_focused_composition_derives_profile15_child_from_synthetic_core(
     core = SimpleNamespace(plan=parent, state_root=core_root)
     run_root = tmp_path / "composed"
     run_root.mkdir()
-    plan = module.GplusFocusedCompositionPlan(
+    common = dict(
         core_plan_path=str(tmp_path / "core-plan.json"),
         core_plan_sha256="d" * 64,
         run_root=str(run_root),
         investigation_decision_limit=8,
     )
+    plan = (
+        module.GplusHistoricalCompositionPlan(
+            **common,
+            historical_library_path=str(tmp_path / "reviewed-library.json"),
+            historical_library_sha256="6" * 64,
+            historical_query_group_id="group-1",
+        ) if history_enabled else module.GplusFocusedCompositionPlan(**common)
+    )
+    history = precedents(case, "7" * 64) if history_enabled else None
     monkeypatch.setattr(
         module,
         "inspect_ops_case",
@@ -442,7 +453,7 @@ def test_real_focused_composition_derives_profile15_child_from_synthetic_core(
         return SimpleNamespace(plan=child)
 
     monkeypatch.setattr(module, "load_ops_plan", admit_child)
-    path, pin = module._derive_stage(plan, core)
+    path, pin = module._derive_stage(plan, core, history)
     child = read_ops_plan(path, pin)
     assert admitted_children == [child]
     assert child.profile.profile_id == "v2-ops-sre/15"
@@ -454,6 +465,7 @@ def test_real_focused_composition_derives_profile15_child_from_synthetic_core(
     assert child.preparation.mode == "load"
     assert child.preparation.receipt_sha256 == sha256_hex(receipt.read_bytes())
     assert child.code_files == parent.code_files and child.case == parent.case
+    assert getattr(child, "historical_precedents", None) == history
 
 
 @pytest.mark.parametrize("terminal", ["completed", "completed_partial_report"])

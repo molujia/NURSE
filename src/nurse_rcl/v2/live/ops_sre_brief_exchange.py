@@ -53,6 +53,7 @@ from nurse_rcl.v2.live.ops_sre_feedback_context import (
     latest_result_context,
 )
 from nurse_rcl.v2.live.ops_sre_frozen_language import FROZEN_RANKING_POLICY
+from nurse_rcl.v2.live.ops_sre_historical_cases import HistoricalContext, historical_policy
 from nurse_rcl.v2.live.ops_sre_history_view import pack_history_view, unpack_history_view
 from nurse_rcl.v2.live.ops_sre_model_view import (
     MODEL_VIEW_GUIDANCE,
@@ -572,7 +573,9 @@ def _request(body: dict[str, Any], *, report: bool) -> bytes:
         messages=[
             dict(
                 role="system",
-                content=(report_policy["system"] if report else decision_policy["system"]),
+                content=historical_policy(report_policy if report else decision_policy, body)[
+                    "system"
+                ],
             ),
             dict(role="user", content=encode_json(body, limits).decode()),
         ],
@@ -646,13 +649,20 @@ def _body(raw: bytes, *, report: bool) -> dict[str, Any]:
         or messages[0]
         != {
             "role": "system",
-            "content": (report_policy["system"] if report else policy["system"]),
+            "content": historical_policy(report_policy if report else policy, body)["system"],
         }
         or messages[1]["role"] != "user"
     ):
         raise ExchangeBoundaryError("sre_brief_wire_messages")
     body = decode_json_object(messages[1]["content"].encode(), limits)
     expected = {"protocol", "opaque_case_id", "case_snapshot_id", "context"}
+    if "historical_precedents" in body and not report and (
+        body["protocol"] == "nurse.v2.sre-decision-exchange/26"
+    ):
+        HistoricalContext.from_model_view(body["historical_precedents"]).require_query(
+            body["opaque_case_id"]
+        )
+        expected.add("historical_precedents")
     if report:
         expected |= {"context_sha256", "output_schema"}
     correction = body.get("correction")
@@ -1124,6 +1134,7 @@ def prepare_brief_decision(
     decision_index: int,
     context: dict[str, Any],
     references: dict[str, Any] | None = None,
+    historical_precedents: HistoricalContext | None = None,
 ) -> bytes:
     local = (
         references
@@ -1171,6 +1182,10 @@ def prepare_brief_decision(
             opaque_case_id=opaque_case_id,
             case_snapshot_id=case_snapshot_id,
             context=packet,
+            **(
+                {"historical_precedents": historical_precedents.model_view()}
+                if historical_precedents is not None else {}
+            ),
         ),
         report=False,
     )
@@ -1244,7 +1259,7 @@ def bind_brief_decision(
         correction_index=1 if correction is not None else None,
         input_sha256=case_snapshot_id,
         context_sha256=sha256_hex(encode_json(context, CONTEXT_LIMITS)),
-        prompt_schema_sha256=_decision_policy(
+        prompt_schema_sha256=historical_policy(_decision_policy(
             condition=context["schema_version"] == FEEDBACK_INPUT_SCHEMA,
             recovery=context["schema_version"] == "nurse.v2.sre-investigation-input/9",
             comparable=context["schema_version"] == "nurse.v2.sre-investigation-input/10",
@@ -1264,7 +1279,7 @@ def bind_brief_decision(
             typed_purpose=context["schema_version"] == "nurse.v2.sre-investigation-input/23",
             atomic_selector=context["schema_version"] == "nurse.v2.sre-investigation-input/24",
             focused=context["schema_version"] == "nurse.v2.sre-investigation-input/26",
-        )["prompt_sha256"],
+        ), body)["prompt_sha256"],
         request_sha256=sha256_hex(raw),
     )
 

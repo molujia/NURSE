@@ -1,7 +1,6 @@
 """Explicit one-case composition: fresh deterministic core, bounded stage, G+.
 
-Ordinary directed/atomic profiles remain stage-only. This entry never changes
-their admission gates and never imports a historical investigation or report.
+The opt-in history composition retrieves reviewed precedents after freezing the core.
 """
 
 from __future__ import annotations
@@ -27,6 +26,7 @@ from nurse_rcl.v2.live.ops_contracts import OpsSreFeedbackFactProfile, OpsSreFoc
 from nurse_rcl.v2.live.ops_execution import run_round
 from nurse_rcl.v2.live.ops_plan import (
     OpsAdmittedPlan,
+    OpsHistoricalStagePlan,
     OpsSinglePlan,
     load_ops_plan,
     plain_location,
@@ -37,6 +37,7 @@ from nurse_rcl.v2.live.ops_sre_directed_stage import run_stage_round
 from nurse_rcl.v2.live.ops_sre_gplus_contract import GPLUS_PROTOCOL
 from nurse_rcl.v2.live.ops_sre_gplus_provider import GplusDelivery, GplusReportProvider
 from nurse_rcl.v2.live.ops_sre_gplus_run import run_gplus_report
+from nurse_rcl.v2.live.ops_sre_historical_cases import HistoricalContext
 from nurse_rcl.v2.live.ops_sre_stage_handoff import (
     retained_sources as _retained_sources,  # noqa: F401 -- compatibility re-export.
 )
@@ -64,6 +65,19 @@ class GplusFocusedCompositionPlan(GplusCompositionPlan):
     investigation_profile: Literal["v2-ops-sre/15"] = "v2-ops-sre/15"
 
 
+class GplusHistoricalCompositionPlan(GplusFocusedCompositionPlan):
+    schema_version: Literal["nurse.v2.gplus-one-case-composition/3"] = (
+        "nurse.v2.gplus-one-case-composition/3"  # type: ignore[assignment]
+    )
+    historical_library_path: str
+    historical_library_sha256: SHA256
+    historical_query_group_id: str = Field(pattern=r"^[a-zA-Z0-9_.-]{1,128}$", strict=True)
+    history_embedding_model: Literal[
+        "doubao-embedding-vision-251215", "doubao-embedding-text-240715"
+    ] = "doubao-embedding-vision-251215"
+    history_top_k: int = Field(default=5, ge=1, strict=True)
+
+
 def composition_sha256(plan: GplusCompositionPlan) -> str:
     return sha256_hex(canonical_json_bytes(plan.model_dump(mode="json")))
 
@@ -72,7 +86,7 @@ def composition_grant(plan: GplusCompositionPlan) -> dict[str, Any]:
     count = plan.investigation_decision_limit
     grant = dict(
         schema_version="nurse.v2.gplus-composition-grant/2"
-        if type(plan) is GplusFocusedCompositionPlan
+        if isinstance(plan, GplusFocusedCompositionPlan)
         else "nurse.v2.gplus-composition-grant/1",
         core_plan_sha256=plan.core_plan_sha256,
         investigation_decisions=count,
@@ -86,8 +100,16 @@ def composition_grant(plan: GplusCompositionPlan) -> dict[str, Any]:
         legal_early_stop=True,
         last_receipt="report_visible_not_a_nonexistent_successor_decision",
     )
-    if type(plan) is GplusFocusedCompositionPlan:
+    if isinstance(plan, GplusFocusedCompositionPlan):
         grant["investigation_profile"] = plan.investigation_profile
+    if isinstance(plan, GplusHistoricalCompositionPlan):
+        grant.update(
+            schema_version="nurse.v2.gplus-composition-grant/3",
+            historical_library_sha256=plan.historical_library_sha256,
+            historical_query_group_id=plan.historical_query_group_id,
+            history_embedding_model=plan.history_embedding_model,
+            history_top_k=plan.history_top_k,
+        )
     return grant
 
 
@@ -96,11 +118,10 @@ def read_composition(path: Path, pin: str) -> GplusCompositionPlan:
     value = json.loads(raw)
     if type(value) is not dict:
         raise ValueError("G+ composition plan shape differs")
-    model = (
-        GplusFocusedCompositionPlan
-        if value.get("schema_version") == "nurse.v2.gplus-one-case-composition/2"
-        else GplusCompositionPlan
-    )
+    model = {
+        "nurse.v2.gplus-one-case-composition/2": GplusFocusedCompositionPlan,
+        "nurse.v2.gplus-one-case-composition/3": GplusHistoricalCompositionPlan,
+    }.get(value.get("schema_version"), GplusCompositionPlan)
     plan = model.model_validate_json(raw)
     if sha256_hex(raw) != pin or raw != canonical_json_bytes(plan.model_dump(mode="json")):
         raise ValueError("G+ composition external plan pin differs")
@@ -129,7 +150,9 @@ def admit_composition(plan: GplusCompositionPlan) -> OpsAdmittedPlan:
     return core
 
 
-def _derive_stage(plan: GplusCompositionPlan, core: OpsAdmittedPlan) -> tuple[Path, str]:
+def _derive_stage(
+    plan: GplusCompositionPlan, core: OpsAdmittedPlan, history: HistoricalContext | None = None
+) -> tuple[Path, str]:
     """Derive the same-case child only after the new deterministic core is sealed."""
     result = inspect_ops_case(core)
     if result["channels"] != dict(core="completed", investigation="disabled", report="disabled"):
@@ -148,7 +171,7 @@ def _derive_stage(plan: GplusCompositionPlan, core: OpsAdmittedPlan) -> tuple[Pa
     value.update(
         profile=(
             OpsSreFocusedProfile()
-            if type(plan) is GplusFocusedCompositionPlan
+            if isinstance(plan, GplusFocusedCompositionPlan)
             else OpsSreFeedbackFactProfile()
         ).model_dump(mode="json"),
         mode="with-agent",
@@ -162,7 +185,16 @@ def _derive_stage(plan: GplusCompositionPlan, core: OpsAdmittedPlan) -> tuple[Pa
             case_result_sha256=sha256_hex((core.state_root / "case-result.json").read_bytes()),
         ),
     )
-    child = OpsSinglePlan.model_validate_json(canonical_json_bytes(value))
+    if isinstance(plan, GplusHistoricalCompositionPlan) != (history is not None):
+        raise ValueError("child historical context differs from its composition")
+    if history is None:
+        child = OpsSinglePlan.model_validate_json(canonical_json_bytes(value))
+    else:
+        value.update(
+            schema_version="nurse.v2.ops-single-plan/2",
+            historical_precedents=history.model_dump(mode="json"),
+        )
+        child = OpsHistoricalStagePlan.model_validate_json(canonical_json_bytes(value))
     path = Path(plan.run_root) / "investigation-plan.json"
     raw = canonical_json_bytes(child.model_dump(mode="json"))
     if path.exists():
@@ -231,7 +263,34 @@ def run_gplus_case(
                     core_result_path=str(core.state_root / "core/result.json"),
                 )
             )
-            stage_path, stage_pin = _derive_stage(plan, core)
+            history = None
+            if isinstance(plan, GplusHistoricalCompositionPlan):
+                from nurse_rcl.v2.live.verified_history import retrieve_verified_history
+
+                snapshot = core_result.evidence.graph.graph_pair.fault_snapshot
+                retrieval = retrieve_verified_history(
+                    query_core=core_result.model_dump(mode="json"),
+                    library_path=plain_location(Path(plan.historical_library_path)),
+                    query_id=core_result.identity.opaque_case_id,
+                    query_group_id=plan.historical_query_group_id,
+                    decision_time=snapshot.decision_time_unix_ns,
+                    top_k=plan.history_top_k,
+                    expected_library_sha256=plan.historical_library_sha256,
+                    embedding_model=plan.history_embedding_model,
+                )
+                if (
+                    retrieval["library_sha256"] != plan.historical_library_sha256
+                    or retrieval["model"] != plan.history_embedding_model
+                ):
+                    raise ValueError("historical retrieval model or library differs from its plan")
+                history = HistoricalContext.from_retrieval(
+                    retrieval, query_id=core_result.identity.opaque_case_id,
+                    core_result_digest=core_result.core_result_digest,
+                )
+                retrieval_bytes = canonical_json_bytes(retrieval)
+                atomic_write_bytes(root / "history-retrieval.json", retrieval_bytes)
+                result["history_retrieval_sha256"] = sha256_hex(retrieval_bytes)
+            stage_path, stage_pin = _derive_stage(plan, core, history)
             grant = stage_grant(stage_pin, plan.investigation_decision_limit)
             grant_pin = sha256_hex(canonical_json_bytes(grant))
             atomic_write_bytes(root / "investigation-grant.json", canonical_json_bytes(grant))
@@ -278,6 +337,7 @@ def run_gplus_case(
                 execution_sha256=pin,
                 approved_execution_sha256=pin,
                 complete=complete,
+                historical_precedents=history,
             )
             result["channels"]["report"] = report["status"]
             result["report_context_sha256"] = context.context_sha256

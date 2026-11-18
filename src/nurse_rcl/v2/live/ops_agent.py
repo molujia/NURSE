@@ -42,6 +42,7 @@ from nurse_rcl.v2.live.ops_indexed_tools import OpsIndexedInvestigationLedger, O
 from nurse_rcl.v2.live.ops_investigation_ledger import OpsInvestigationLedger
 from nurse_rcl.v2.live.ops_sre_context import parse_sre_decision, sre_investigation_input
 from nurse_rcl.v2.live.ops_sre_exchange import prepare_sre_decision
+from nurse_rcl.v2.live.ops_sre_historical_cases import HistoricalContext
 from nurse_rcl.v2.live.ops_sre_ledger import OpsSreInvestigationLedger
 from nurse_rcl.v2.live.ops_sre_tools import OpsSreToolbox
 from nurse_rcl.v2.live.ops_sre_working_tools import (
@@ -83,6 +84,7 @@ def run_ops_agent(
     sre_profile: SreProfileId | None = None,
     stage_decision_limit: int | None = None,
     feedback_fact: bool = False,
+    historical_precedents: HistoricalContext | None = None,
 ) -> OpsAgentResult:
     """Provider receives detached JSON, never toolbox/core objects or paths.
 
@@ -92,6 +94,8 @@ def run_ops_agent(
     """
     profile = resolve_sre_profile(sre=sre, working=working, profile=sre_profile)
     focused = profile == "hermes-sre-tools/25"
+    if historical_precedents is not None and not (focused and empirical and sre):
+        raise ValueError("historical precedents require a focused investigation")
     atomic_selector = profile == "hermes-sre-tools/23" or focused
     if feedback_fact and not (
         empirical and sre and atomic_selector and not focused and stage_decision_limit is not None
@@ -692,6 +696,7 @@ def run_ops_agent(
                                         opaque_case_id=opaque_case_id,
                                         case_snapshot_id=toolbox.case_snapshot_id,
                                         decision_index=cursor,
+                                        historical_precedents=historical_precedents,
                                     )
                                 )
                             )

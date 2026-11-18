@@ -28,6 +28,7 @@ from nurse_rcl.v2.live.ops_sre_brief_report import (
 from nurse_rcl.v2.live.ops_sre_gplus_contract import GPLUS_PATH_RESPONSE, bind_gplus_response
 from nurse_rcl.v2.live.ops_sre_gplus_provider import GplusDelivery, read_gplus_delivery
 from nurse_rcl.v2.live.ops_sre_gplus_report import gplus_report_body, project_gplus_report
+from nurse_rcl.v2.live.ops_sre_historical_cases import HistoricalContext
 from nurse_rcl.v2.live.ops_sre_model_view import _book, _prefix
 from nurse_rcl.v2.live.ops_sre_references import _translate
 from nurse_rcl.v2.live.ops_sre_report_check_policy import parse_checked_brief, response_admission
@@ -157,13 +158,17 @@ def _evaluate(
     )
     predictions = _prediction_outputs(context, references, wire, delivery.native)
     path_text = "\n\n" + predictions["predicted-paths.md"].decode() if predictions else ""
+    historical_index = (
+        HistoricalContext.from_model_view(body["historical_precedents"]).markdown()
+        if "historical_precedents" in body else ""
+    )
     return {
         "binding.json": canonical_json_bytes(receipt),
         "checked-short.json": short,
         "resolved.json": resolved,
         "checks.json": checks,
         "report.md": (pair["report"] + note + path_text).encode(),
-        "evidence.md": (pair["evidence"] + note).encode(),
+        "evidence.md": (pair["evidence"] + note + historical_index).encode(),
     }
 
 
@@ -176,6 +181,7 @@ def run_gplus_report(
     execution_sha256: str,
     approved_execution_sha256: str | None,
     complete: Callable[[bytes], GplusDelivery],
+    historical_precedents: HistoricalContext | None = None,
 ) -> dict[str, Any]:
     for pin in (code_sha256, execution_sha256):
         require_pin(pin)
@@ -184,14 +190,22 @@ def run_gplus_report(
     validate_brief_report(context)
     root = Path(root)
     if (root / "result.json").exists():
-        return inspect_gplus_report(
+        retained = inspect_gplus_report(
             root=root,
             expected_context_sha256=context.context_sha256,
             expected_code_sha256=code_sha256,
             expected_execution_sha256=execution_sha256,
         )
+        if retained["request_sha256"] is not None:
+            previous, _ = gplus_report_body((root / "request.bin").read_bytes())
+            expected = historical_precedents.model_view() if historical_precedents else None
+            if previous.get("historical_precedents") != expected:
+                raise ValueError("existing report used a different historical context")
+        return retained
     working = deepcopy(references)
-    projection = project_gplus_report(context, references=working)
+    projection = project_gplus_report(
+        context, references=working, historical_precedents=historical_precedents
+    )
     root.mkdir(mode=0o700, parents=True, exist_ok=False)
     _durable(root / "context.json", encode_brief_report_storage(context))
     _durable(root / "references.json", canonical_json_bytes(working))

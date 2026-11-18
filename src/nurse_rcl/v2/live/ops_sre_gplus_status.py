@@ -10,10 +10,16 @@ from nurse_rcl.artifacts import canonical_json_bytes, sha256_hex
 from nurse_rcl.v2.dynamic_verification.safety import require_pin
 from nurse_rcl.v2.live.normal_queries import _read_bytes
 from nurse_rcl.v2.live.ops_case import inspect_saved_case, plan_identity
-from nurse_rcl.v2.live.ops_plan import read_ops_plan
+from nurse_rcl.v2.live.ops_plan import OpsHistoricalStagePlan, read_ops_plan
 from nurse_rcl.v2.live.ops_sre_directed_stage import _inspect_stage
-from nurse_rcl.v2.live.ops_sre_gplus_case import GplusFocusedCompositionPlan, read_composition
+from nurse_rcl.v2.live.ops_sre_gplus_case import (
+    GplusFocusedCompositionPlan,
+    GplusHistoricalCompositionPlan,
+    read_composition,
+)
+from nurse_rcl.v2.live.ops_sre_gplus_report import gplus_report_body
 from nurse_rcl.v2.live.ops_sre_gplus_run import inspect_gplus_report
+from nurse_rcl.v2.live.ops_sre_historical_cases import HistoricalContext
 
 
 def inspect_gplus_case(path: Path, pin: str) -> dict[str, Any]:
@@ -39,7 +45,7 @@ def inspect_gplus_case(path: Path, pin: str) -> dict[str, Any]:
         or result.get("result_sha256") != sha256_hex(canonical_json_bytes(unsigned))
     ):
         raise ValueError("G+ composition saved terminal identity differs")
-    focused_success = type(plan) is GplusFocusedCompositionPlan and result.get("status") in {
+    focused_success = isinstance(plan, GplusFocusedCompositionPlan) and result.get("status") in {
         "completed",
         "completed_partial_report",
     }
@@ -62,9 +68,30 @@ def inspect_gplus_case(path: Path, pin: str) -> dict[str, Any]:
         retained = inspect_saved_case(core_root, plan_identity(core, plan.core_plan_sha256))
         if retained["core_result_digest"] != result["core_result_digest"]:
             raise ValueError("G+ saved deterministic core differs")
+    history = None
+    if isinstance(plan, GplusHistoricalCompositionPlan) and (
+        focused_success or result.get("history_retrieval_sha256") is not None
+    ):
+        saved = _read_bytes(root / "history-retrieval.json", 64 * 1024**2)
+        retrieval = json.loads(saved)
+        if (
+            sha256_hex(saved) != result.get("history_retrieval_sha256")
+            or retrieval["library_sha256"] != plan.historical_library_sha256
+            or retrieval["model"] != plan.history_embedding_model
+            or len(retrieval["matches"]) > plan.history_top_k
+        ):
+            raise ValueError("saved historical retrieval differs from its composition")
+        history = HistoricalContext.from_retrieval(
+            retrieval, query_id=core.case.opaque_case_id,
+            core_result_digest=result["core_result_digest"],
+        )
     stage_pin = result.get("stage_plan_sha256")
     if stage_pin is not None and (root / "investigation-plan.json").exists():
         stage = read_ops_plan(root / "investigation-plan.json", stage_pin)
+        if (history is not None) != isinstance(stage, OpsHistoricalStagePlan) or (
+            isinstance(stage, OpsHistoricalStagePlan) and history != stage.historical_precedents
+        ):
+            raise ValueError("saved stage precedents differ from its original retrieval")
         if stage.profile.profile_id != getattr(plan, "investigation_profile", "v2-ops-sre/14"):
             raise ValueError("G+ saved child investigation profile differs from composition")
         if (
@@ -97,6 +124,10 @@ def inspect_gplus_case(path: Path, pin: str) -> dict[str, Any]:
             )
             if report["state_sha256"] != result["report_state_sha256"]:
                 raise ValueError("G+ saved report owner differs")
+            if history is not None and report["request_sha256"] is not None:
+                body, _ = gplus_report_body((stage_root / "gplus-report/request.bin").read_bytes())
+                if body.get("historical_precedents") != history.model_view():
+                    raise ValueError("saved report precedents differ from its original retrieval")
     return dict(
         result, status_reader_new_ark_calls=0, status_reader_preparation_load_import_dispatch=0
     )

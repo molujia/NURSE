@@ -39,6 +39,7 @@ from nurse_rcl.v2.live.ops_failure import (
 from nurse_rcl.v2.live.ops_node_common import prepared_snapshot_id
 from nurse_rcl.v2.live.ops_plan import (
     OpsAdmittedPlan,
+    OpsHistoricalStagePlan,
     load_ops_plan,
     read_ops_plan,
     require_ops_code,
@@ -386,7 +387,8 @@ def run_directed_stage(
         atomic_selector = isinstance(plan.profile, OpsSreAtomicSelectorProfile)
         if focused:
             from nurse_rcl.v2.live.ops_sre_focused_tools import (
-                OpsSreFocusedPublicationReader, OpsSreFocusedToolbox,
+                OpsSreFocusedPublicationReader,
+                OpsSreFocusedToolbox,
             )
         toolbox_type = (
             OpsSreFocusedToolbox
@@ -438,6 +440,11 @@ def run_directed_stage(
             approved_stage_sha256=approved_stage_sha256,
         )
         with _phase("method", "orchestration"), _module_span("ops_investigation"):
+            history = (
+                plan.historical_precedents if isinstance(plan, OpsHistoricalStagePlan) else None
+            )
+            if history is not None:
+                history.require_query(identity.opaque_case_id, core.core_result_digest)
             result = run_ops_agent(
                 root=root,
                 toolbox=toolbox,
@@ -462,6 +469,7 @@ def run_directed_stage(
                 opaque_case_id=identity.opaque_case_id,
                 stage_decision_limit=stage_decision_limit,
                 feedback_fact=isinstance(plan.profile, OpsSreFeedbackFactProfile),
+                historical_precedents=history,
             )
         assert isinstance(result, OpsWorkingAgentResult)
         require_ops_code(plan)

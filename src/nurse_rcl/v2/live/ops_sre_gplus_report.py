@@ -39,6 +39,7 @@ from nurse_rcl.v2.live.ops_sre_gplus_contract import (
 )
 from nurse_rcl.v2.live.ops_sre_gplus_graph import build_gplus_graph, gplus_graph_facts
 from nurse_rcl.v2.live.ops_sre_gplus_graph_tables import TABLE_GRAPH_SCHEMA
+from nurse_rcl.v2.live.ops_sre_historical_cases import HistoricalContext, historical_policy
 from nurse_rcl.v2.live.ops_sre_history_view import unpack_history_view
 from nurse_rcl.v2.live.ops_sre_native_report import NATIVE_REPORT_INPUT_LIMITS
 from nurse_rcl.v2.live.ops_sre_typed_report import (
@@ -52,7 +53,7 @@ if TYPE_CHECKING:
 
 
 def _request(body: dict[str, Any]) -> bytes:
-    policy = gplus_policy_for_output_schema(body.get("output_schema"))
+    policy = historical_policy(gplus_policy_for_output_schema(body.get("output_schema")), body)
     exchange = prepare_exchange(
         model=ARK_MODEL,
         max_output_tokens=policy["max_tokens"],
@@ -90,13 +91,13 @@ def gplus_report_body(
     ):
         raise ValueError("G+ single active contract differs")
     body = decode_json_object(messages[1]["content"].encode(), REPORT_LIMITS)
-    policy = gplus_policy_for_output_schema(body.get("output_schema"))
+    policy = historical_policy(gplus_policy_for_output_schema(body.get("output_schema")), body)
     if base["max_tokens"] != policy["max_tokens"] or messages[0] != dict(
         role="system", content=policy["system"]
     ):
         raise ValueError("G+ single active contract differs")
     if (
-        set(body)
+        set(body) - {"historical_precedents"}
         != {
             "schema_version",
             "protocol",
@@ -153,6 +154,10 @@ def gplus_report_body(
         references=references,
         fact_store=store,
     )
+    if "historical_precedents" in body:
+        HistoricalContext.from_model_view(body["historical_precedents"]).require_query(
+            body["opaque_case_id"], admitted["evidence"]["core_result_digest"]
+        )
     return dict(
         body,
         context=admitted,
@@ -167,6 +172,7 @@ def project_gplus_report(
     *,
     references: dict[str, Any],
     graph_representation: str = "auto",
+    historical_precedents: HistoricalContext | None = None,
 ) -> OpsInputProjection:
     working = deepcopy(references)
     retained = validate_brief_report(context)
@@ -213,6 +219,9 @@ def project_gplus_report(
             opaque_case_id=header.opaque_case_id,
             case_snapshot_id=header.case_snapshot_id,
         )
+        if historical_precedents is not None:
+            historical_precedents.require_query(header.opaque_case_id, context.core_result_digest)
+            body["historical_precedents"] = historical_precedents.model_view()
         raw = _request(body)
         decoded, decoded_store = gplus_report_body(raw, references=working)
         if canonical_json_bytes(decoded["context"]) != canonical_json_bytes(
@@ -233,7 +242,8 @@ def project_gplus_report(
             # Pure deterministic re-encoding, not another model call or source
             # selection. Also cover a legal graph whose whole packet overflows.
             return project_gplus_report(
-                context, references=references, graph_representation="tables"
+                context, references=references, graph_representation="tables",
+                historical_precedents=historical_precedents,
             )
         return DiagnosedInputProjection(
             status="resource_limit",
@@ -268,6 +278,8 @@ def bind_gplus_report(raw: bytes) -> LiveRequestBinding:
         phase="report",
         input_sha256=header["core_result_digest"],
         context_sha256=body["context_sha256"],
-        prompt_schema_sha256=gplus_policy_for_output_schema(body["output_schema"])["prompt_sha256"],
+        prompt_schema_sha256=historical_policy(
+            gplus_policy_for_output_schema(body["output_schema"]), body
+        )["prompt_sha256"],
         request_sha256=sha256_hex(raw),
     )

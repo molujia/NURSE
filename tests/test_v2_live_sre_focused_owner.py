@@ -42,8 +42,9 @@ def opened(complete):
     return tool
 
 
+@pytest.mark.parametrize("history_enabled", [False, True])
 def test_catalog_next_frozen_read_real_delivery_and_same_ceiling_resume(
-    complete, tmp_path, monkeypatch, owner_errors
+    complete, tmp_path, monkeypatch, owner_errors, history_enabled
 ):
     from nurse_rcl.v2.live.ops_agent import run_ops_agent
     from nurse_rcl.v2.live.ops_agent_state import load_conversation
@@ -54,6 +55,7 @@ def test_catalog_next_frozen_read_real_delivery_and_same_ceiling_resume(
         OpsSreFocusedLedgerState,
     )
     from nurse_rcl.v2.live.ops_sre_stage_handoff import retained_sources
+    from tests.test_verified_history_context import precedents
 
     probe = opened(complete)
     probe._refresh_semantic()
@@ -68,6 +70,8 @@ def test_catalog_next_frozen_read_real_delivery_and_same_ceiling_resume(
     )
     candidate, metric = target["targets"][0], target["payload"]["metric_name"]
     before = canonical_json_bytes(complete[2].model_dump(mode="json"))
+    case_id = complete[0].catalog.opaque_case_id
+    history = precedents(case_id, "b" * 64) if history_enabled else None
     sent, contexts = [], []
 
     def forbidden(*_args, **_kwargs):
@@ -78,6 +82,10 @@ def test_catalog_next_frozen_read_real_delivery_and_same_ceiling_resume(
 
     def send(index, wire):
         sent.append(index)
+        body = json.loads(json.loads(wire)["messages"][1]["content"])
+        assert body.get("historical_precedents") == (
+            history.model_view() if history is not None else None
+        )
         context = brief_context_from_wire(
             wire,
             opaque_case_id=complete[0].catalog.opaque_case_id,
@@ -140,6 +148,7 @@ def test_catalog_next_frozen_read_real_delivery_and_same_ceiling_resume(
             sre_profile="hermes-sre-tools/25",
             opaque_case_id=complete[0].catalog.opaque_case_id,
             stage_decision_limit=limit,
+            historical_precedents=history,
         )
 
     first = run(1, send)

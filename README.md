@@ -15,6 +15,7 @@ The core exposes the computations behind its evidence and scores. Investigation 
   - [Inspect the outputs](#inspect-the-outputs)
 - [Reproducibility](#reproducibility)
 - [Path accuracy](#path-accuracy)
+- [Historical case retrieval and its evaluation protocol](docs/history_retrieval_experiment.md)
 - [Datasets](#datasets)
 - [Repository layout](#repository-layout)
 - [Paper and citation](#paper-and-citation)
