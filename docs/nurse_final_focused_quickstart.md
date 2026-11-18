@@ -44,18 +44,17 @@ python scripts/dev/run_final_explainability_0ark.py \
 
 真实接入使用 `GplusFocusedCompositionPlan`：`schema_version="nurse.v2.gplus-one-case-composition/2"`、`investigation_profile="v2-ops-sre/15"`，配置是 `configs/v2/ops_sre_focused_profile.json`。从完整 checkout 使用这些配置与源文件；单独安装 wheel 不能代替计划要求的完整代码根目录。
 
-默认计划关闭历史检索。新计划启用历史使用 `GplusHistoryMethodPlan`（`nurse.v2.gplus-one-case-composition/4`）。既有版本 3 计划继续按其固定的嵌入模型运行。
+新建历史调查计划使用 `GplusAmplitudeQualityPlan`（`nurse.v2.gplus-one-case-composition/5`）。版本 5 按准备计划时的模型配置选择方法，两个方法共享幅度与质量表示。既有版本 3、4 的计划继续重放原有表示和方法。
 
 | 字段 | 取值 |
 | --- | --- |
 | `historical_library_path` | 已核验历史库 JSON 的绝对路径 |
 | `historical_library_sha256` | 该文件实际字节的 SHA-256 |
 | `historical_query_group_id` | 当前事件所属原始故障注入组的匿名标识，与历史库使用同一组标识规则，用于排除重放或重复采集 |
-| `history_method` | 版本 4 默认 `fixed-rule`，本地计算加权 Jaccard；显式选择 `embedding` 时计算向量欧氏距离 |
-| `history_embedding_model` | 默认 `doubao-embedding-vision-251215`，以文本作为输入。使用其他支持的型号时在计划中显式指定，检索回执核对实际型号 |
+| `history_embedding_model` | 准备时可指定 `doubao-embedding-vision-251215` 或 `text-embedding-3-small`。省略时读取 `NURSE_EMBEDDING_MODEL`，兼容旧的 `ARK_EMBEDDING_MODEL`。规范计划固定具体型号或 `null`，分别对应向量检索或本地规则。 |
 | `history_top_k` | 选取的历史案例数上限，默认 5 |
 
-核心完成并冻结排名后，组合入口以该事件的决策时刻检索可用历史案例。检索时仅嵌入方法需要火山方舟 `ARK_API_KEY`。调查请求与 G+ 报告请求均通过 `historical_precedents` 接收同一组历史案例的规范文本和各自的来源引用。调查可据此提出待检验的解释或检查，当前事件的陈述仍须绑定本次供应的证据。组合输出中的 `history-retrieval.json` 保存检索方法、次序与距离，成功报告的 `evidence.md` 按案例列出历史来源，便于 SRE 回查。
+核心冻结排名后，组合入口按当前事件的决策时刻筛选历史。豆包嵌入读取 `ARK_API_KEY`，OpenAI 嵌入读取 `OPENAI_API_KEY`。调查与报告另用 focused profile 中配置的聊天 LLM 及其凭据。两个阶段通过 `historical_precedents` 接收相同的历史证据和来源引用。组合输出 `history-retrieval.json` 保存检索方法、证据表示、型号、次序及距离；报告的 `evidence.md` 按案例列出历史来源。
 
 计划必须引用当前代码与运行环境对应的新 core plan 及其 SHA-256。core 必须为 `core-only`、profile `v2-ops-isolated/2`、`source_core=null`，输出位于该 run 的 `core-results`。代码/skill/config 清单、输入 pin、推理身份清单、父计划、preparation key、source files 与 source descriptor 约束必须一致。代码改动后旧 plan 的 code pin 不再代表当前实现；不能只改一个 profile 名称沿用旧计划。
 

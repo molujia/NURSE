@@ -11,21 +11,23 @@ from pathlib import Path
 from typing import Any
 
 from nurse_rcl.v2.live.fixed_history_similarity import (
-    DEFAULT_HISTORY_METHOD,
     RULE_DISTANCE,
     RULE_ID,
     HistoryMethod,
     fixed_history_scores,
 )
 from nurse_rcl.v2.live.semantic_history_retrieval import (
-    MODEL_ID,
-    ArkTextEmbedder,
     HistoryMatch,
     TextEmbedder,
+    make_embedder,
     rank_history,
+    requested_embedding_model,
 )
 
 PROJECTION = "nurse.history-signal-projection/1"
+PROJECTION_V2 = "nurse.history-signal-projection/2"
+LEGACY_PROFILE = "direction-only"
+AMPLITUDE_QUALITY_PROFILE = "amplitude-quality"
 LIBRARY = "nurse.verified-history-library/1"
 HUMAN = "human-reviewed"
 BENCHMARK = "benchmark-reference-only"
@@ -74,7 +76,7 @@ def validate_document(doc: JsonRecord) -> JsonRecord:
     if (
         not isinstance(doc, dict)
         or set(doc) != {"schema_version", "case_id", "decision_time_ns", "evidence"}
-        or doc["schema_version"] != PROJECTION
+        or doc["schema_version"] not in (PROJECTION, PROJECTION_V2)
         or not _matches(doc["case_id"], _CASE)
     ):
         raise ValueError("invalid evidence projection schema or case identity")
@@ -82,7 +84,16 @@ def validate_document(doc: JsonRecord) -> JsonRecord:
         raise ValueError("invalid decision time or evidence list")
     seen = set()
     for item in doc["evidence"]:
-        if not isinstance(item, dict) or set(item) != {"kind", "signal", "state", "source_ref"}:
+        if not isinstance(item, dict):
+            raise ValueError("unexpected evidence fields")
+        fields = {"kind", "signal", "state", "source_ref"}
+        if doc["schema_version"] == PROJECTION_V2 and item.get("kind") == "window_summary":
+            fields.update(("strength_band", "quality_band"))
+            if item.get("strength_band") not in ("slight", "moderate", "large", "very large") or (
+                item.get("quality_band") not in ("low", "moderate", "high")
+            ):
+                raise ValueError("invalid magnitude or observation quality band")
+        if set(item) != fields:
             raise ValueError("unexpected evidence fields")
         if (
             not _matches(item["signal"], _SIGNAL)
@@ -109,8 +120,15 @@ def _positive(value: object) -> bool:
     return math.isfinite(value) and value > 0
 
 
-def project_core(core: JsonRecord) -> JsonRecord:
+def _includes_bands(profile: str) -> bool:
+    if profile not in (AMPLITUDE_QUALITY_PROFILE, LEGACY_PROFILE):
+        raise ValueError("unknown historical evidence profile")
+    return profile == AMPLITUDE_QUALITY_PROFILE
+
+
+def project_core(core: JsonRecord, *, profile: str = AMPLITUDE_QUALITY_PROFILE) -> JsonRecord:
     """Use only registered measurement/mechanism fields as semantic features."""
+    use_bands = _includes_bands(profile)
     evidence = core["evidence"]
     strengths = evidence["ranking"]["propagation"]["local_scoring"]["strengths"]
     core_id = core["core_result_digest"]
@@ -169,9 +187,28 @@ def project_core(core: JsonRecord) -> JsonRecord:
 
     mechanisms = best(gates, 8)
     rows = best(observations, _MAX_FACTS - len(mechanisms)) + mechanisms
+    if use_bands:
+        for row in rows:
+            if row["kind"] == "window_summary":
+                # Reuse the exact term selected above, including deterministic tie-breaking.
+                term = strengths["terms"][int(row["source_ref"].rsplit("/", 1)[1])]
+                magnitude = abs(term["calculation"]["signed_z"])
+                quality = term["quality_factor"]
+                row["strength_band"] = (
+                    "slight"
+                    if magnitude < 1
+                    else "moderate"
+                    if magnitude < 3
+                    else "large"
+                    if magnitude < 6
+                    else "very large"
+                )
+                row["quality_band"] = (
+                    "low" if quality < 0.5 else "moderate" if quality < 0.8 else "high"
+                )
     return validate_document(
         {
-            "schema_version": PROJECTION,
+            "schema_version": PROJECTION_V2 if use_bands else PROJECTION,
             "case_id": core["identity"]["opaque_case_id"],
             "decision_time_ns": evidence["graph"]["graph_pair"]["fault_snapshot"][
                 "decision_time_unix_ns"
@@ -197,17 +234,40 @@ def _sentence(row: JsonRecord) -> str:
     )
 
 
-def rendered_evidence(doc: JsonRecord) -> list[JsonRecord]:
-    return [
-        {"text": _sentence(row), "source_ref": row["source_ref"]}
-        for row in sorted(
-            validate_document(doc)["evidence"], key=lambda v: (v["kind"], v["signal"], v["state"])
-        )
-    ]
+def _ordered_rows(doc: JsonRecord) -> list[JsonRecord]:
+    return sorted(
+        validate_document(doc)["evidence"], key=lambda v: (v["kind"], v["signal"], v["state"])
+    )
 
 
-def document_text(doc: JsonRecord) -> str:
-    return "\n".join(row["text"] for row in rendered_evidence(doc))
+def rendered_evidence(
+    doc: JsonRecord, *, profile: str = AMPLITUDE_QUALITY_PROFILE
+) -> list[JsonRecord]:
+    use_bands = _includes_bands(profile)
+    result = []
+    for row in _ordered_rows(doc):
+        text = _sentence(row)
+        if use_bands and "strength_band" in row:
+            text += (
+                f" The standardized change was {row['strength_band']}; "
+                f"observation quality was {row['quality_band']}."
+            )
+        result.append({"text": text, "source_ref": row["source_ref"]})
+    return result
+
+
+def document_text(doc: JsonRecord, *, profile: str = AMPLITUDE_QUALITY_PROFILE) -> str:
+    use_bands = _includes_bands(profile)
+    lines = []
+    for row in _ordered_rows(doc):
+        lines.append(_sentence(row))
+        if use_bands and "strength_band" in row:
+            for attr in ("strength_band", "quality_band"):
+                lines.append(
+                    f"Detail | window_summary | {row['signal']} | {row['state']} | "
+                    f"{attr} | {row[attr]}"
+                )
+    return "\n".join(lines)
 
 
 def validate_library(library: JsonRecord) -> None:
@@ -275,7 +335,9 @@ def retrieve_document(
     group_id: str,
     top_k: int = 5,
     embedder: TextEmbedder | None = None,
-    method: HistoryMethod = DEFAULT_HISTORY_METHOD,
+    method: HistoryMethod | None = None,
+    embedding_model: str | None = None,
+    profile: str = AMPLITUDE_QUALITY_PROFILE,
     benchmark_reference: bool = False,
 ) -> JsonRecord:
     validate_document(query)
@@ -285,13 +347,25 @@ def retrieve_document(
     if type(top_k) is not int or top_k <= 0:
         raise ValueError("top_k must be a positive integer")
     pool = {c["case_id"]: c["document"] for c in eligible_cases(library, query, group_id)}
+    configured = requested_embedding_model(embedding_model) if method != "fixed-rule" else None
+    if method is None:
+        method = "embedding" if configured or getattr(embedder, "model_id", None) else "fixed-rule"
     if method not in ("fixed-rule", "embedding"):
         raise ValueError("unknown historical retrieval method")
-    model = (embedder or ArkTextEmbedder()) if method == "embedding" else None
+    model = None
+    if method == "embedding":
+        if embedder is not None:
+            model = embedder
+        elif configured is not None:
+            model = make_embedder(configured)
+        else:
+            raise ValueError("embedding retrieval requires an embedding model ID")
+        if configured and getattr(model, "model_id", configured) != configured:
+            raise ValueError("historical embedder differs from the requested model")
     matches: tuple[HistoryMatch, ...] = ()
     if pool and query["evidence"]:
-        query_text = document_text(query)
-        documents = {cid: document_text(doc) for cid, doc in pool.items()}
+        query_text = document_text(query, profile=profile)
+        documents = {cid: document_text(doc, profile=profile) for cid, doc in pool.items()}
         if model is None:
             scores = fixed_history_scores(query_text, documents)
             ordered = sorted(scores, key=lambda cid: (-scores[cid], cid))[:top_k]
@@ -305,13 +379,15 @@ def retrieve_document(
         "library_sha256": library_sha256,
         "review_policy": library["review_policy"],
         "method": method,
+        "evidence_profile": profile,
+        "query_projection": query["schema_version"],
+        "legacy_candidate_count": sum(doc["schema_version"] == PROJECTION for doc in pool.values()),
         "rule_id": RULE_ID if method == "fixed-rule" else None,
-        "model": getattr(model, "model_id", MODEL_ID) if model is not None else None,
+        "model": getattr(model, "model_id", configured) if model is not None else None,
         "metric": RULE_DISTANCE if method == "fixed-rule" else "euclidean",
         "eligible_count": len(pool),
-        "provider_receipts": [asdict(row) for row in model.receipts]
-        if matches and isinstance(model, ArkTextEmbedder)
-        else [],
+        "provider_receipts": [asdict(row) for row in getattr(model, "receipts", ())]
+        if matches else [],
         "status": "ranked"
         if matches
         else ("no-query-evidence" if not query["evidence"] else "empty-pool"),
@@ -320,7 +396,7 @@ def retrieve_document(
                 "case_id": m.case_id,
                 "rank": i,
                 "distance": m.distance,
-                "evidence": rendered_evidence(pool[m.case_id]),
+                "evidence": rendered_evidence(pool[m.case_id], profile=profile),
             }
             for i, m in enumerate(matches, 1)
         ],
@@ -335,21 +411,17 @@ def retrieve_verified_history(
     decision_time: int,
     query_group_id: str,
     top_k: int = 5,
-    embedding_model: str = MODEL_ID,
-    method: HistoryMethod = DEFAULT_HISTORY_METHOD,
+    embedding_model: str | None = None,
+    method: HistoryMethod | None = None,
+    profile: str = AMPLITUDE_QUALITY_PROFILE,
     embedder: TextEmbedder | None = None,
     expected_library_sha256: str | None = None,
 ) -> JsonRecord:
     library, checksum = read_library(Path(library_path), expected_library_sha256)
-    query = project_core(query_core)
+    query = project_core(query_core, profile=profile)
     if query["case_id"] != query_id or query["decision_time_ns"] != decision_time:
         raise ValueError("historical retrieval query differs from the frozen incident")
-    if method == "embedding" and embedder is None:
-        embedder = ArkTextEmbedder(embedding_model)
-    elif (method == "embedding"
-          and getattr(embedder, "model_id", embedding_model) != embedding_model):
-        raise ValueError("historical embedder differs from the plan model")
     return retrieve_document(
         query, library, checksum, group_id=query_group_id, top_k=top_k, embedder=embedder,
-        method=method,
+        method=method, embedding_model=embedding_model, profile=profile,
     )

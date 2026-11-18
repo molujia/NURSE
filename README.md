@@ -4,7 +4,7 @@ NURSE is a research implementation for microservice root cause localization (RCL
 
 The core exposes the computations behind its evidence and scores. Investigation uses the resulting ranking to examine incident questions, collect further observations, and identify next checks. G+ carries selected evidence, its context, and its permitted use into the final report. Mitigation and recovery verification remain SRE decisions.
 
-Optional historical retrieval supplies earlier, reviewed cases after the core freezes its ranking. New history-enabled plans use a local rule that compares signals, evidence types, and directions of change. An explicit embedding mode ranks the same evidence texts by Euclidean distance. [Retrieval and evaluation guide](docs/history_retrieval_experiment.md)
+Optional historical retrieval supplies earlier, reviewed cases after the core freezes its ranking. Each eligible window summary describes the signal, direction of change, standardized change magnitude and observation quality. With an embedding model configured, NURSE retrieves cases by Euclidean distance between whole-document vectors. With no embedding model configured, it applies a local weighted Jaccard rule to the same text. [Retrieval and evaluation guide](docs/history_retrieval_experiment.md)
 
 ## Contents
 
@@ -14,6 +14,7 @@ Optional historical retrieval supplies earlier, reviewed cases after the core fr
   - [Input format](#input-format)
   - [Try the software without an API key](#try-the-software-without-an-api-key)
   - [Run a prepared incident](#run-a-prepared-incident)
+  - [Configure the two models](#configure-the-two-models)
   - [Inspect the outputs](#inspect-the-outputs)
 - [Reproducibility](#reproducibility)
 - [Path accuracy](#path-accuracy)
@@ -115,6 +116,19 @@ python scripts/dev/run_final_explainability_0ark.py -q --tb=short \
 ```
 
 The expected outcome is a successful pytest summary with no failures. The wrapper blocks network access and real credential loading; it does not send LLM requests. These tests check software behavior and do not measure benchmark localization accuracy.
+
+### Configure the two models
+
+For deployments that use reviewed history, configure **both an embedding model and a chat LLM**. They serve different purposes and use separate configuration.
+
+| Model | Role | Configuration |
+| --- | --- | --- |
+| Embedding model | Encodes the current incident and historical evidence for retrieval. | Set `NURSE_EMBEDDING_MODEL=doubao-embedding-vision-251215` with `ARK_API_KEY`, or `NURSE_EMBEDDING_MODEL=text-embedding-3-small` with `OPENAI_API_KEY`. |
+| Chat LLM | Selects investigation actions, interprets observations, and drafts the evidence-grounded report. | The focused live profile pins the Ark chat model `deepseek-v4-flash-ga-260731` and uses the deployment's `ARK_API_KEY2` credential file. |
+
+Use composition schema `nurse.v2.gplus-one-case-composition/5` for a new history-enabled run. During plan preparation, an explicit `history_embedding_model` overrides the environment. If omitted, the constructor reads `NURSE_EMBEDDING_MODEL` (or the legacy `ARK_EMBEDDING_MODEL`). The serialized plan pins the resulting model ID, or `null` for the local rule. An API key alone leaves retrieval in local-rule mode. A configured provider error is reported to the caller. The retrieval CLI accepts the same model ID via `--embedding-model`.
+
+Re-project archived cores and review the resulting library to include the magnitude and quality fields. Existing version-1 projections can still be read during incident investigation and carry only their recorded evidence. See the [history configuration and admission guide](docs/history_retrieval_experiment.md).
 
 ### Run a prepared incident
 

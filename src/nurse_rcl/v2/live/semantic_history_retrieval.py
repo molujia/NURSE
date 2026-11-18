@@ -7,12 +7,17 @@ import os
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol, cast
 
 import httpx
 
 MODEL_ID = "doubao-embedding-vision-251215"
 TEXT_MODEL_ID = "doubao-embedding-text-240715"
+OPENAI_MODEL_ID = "text-embedding-3-small"
+OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings"
+EmbeddingModel = Literal[
+    "doubao-embedding-vision-251215", "doubao-embedding-text-240715", "text-embedding-3-small"
+]
 EMBEDDINGS_URL = "https://ark.cn-beijing.volces.com/api/v3/embeddings"
 MULTIMODAL_URL = EMBEDDINGS_URL + "/multimodal"
 DEFAULT_TOP_K = 5
@@ -46,7 +51,7 @@ def _validate_text(text: str) -> None:
     if not isinstance(text, str) or not text.strip():
         raise EmbeddingError("an evidence document must contain nonempty text")
     if len(text.encode("utf-8")) > _MAX_INPUT_BYTES:
-        raise EmbeddingError("an evidence document exceeds the Ark API input byte limit")
+        raise EmbeddingError("an evidence document exceeds the evidence input byte limit")
 
 
 def _vector(values: object) -> tuple[float, ...]:
@@ -61,6 +66,7 @@ def _vector(values: object) -> tuple[float, ...]:
 
 
 def _decode_response(response: httpx.Response, count: int, model: str) -> list[tuple[float, ...]]:
+    provider = "OpenAI" if model == OPENAI_MODEL_ID else "Ark"
     if not response.is_success:
         # Error messages can echo source documents. Only report the HTTP status and
         # provider's machine-readable error category.
@@ -71,27 +77,31 @@ def _decode_response(response: httpx.Response, count: int, model: str) -> list[t
                 category = f" ({error})"
         except (ValueError, AttributeError):
             pass
-        raise EmbeddingError(f"Ark embeddings returned HTTP {response.status_code}{category}")
+        raise EmbeddingError(
+            f"{provider} embeddings returned HTTP {response.status_code}{category}"
+        )
     try:
         body = response.json()
     except ValueError:
-        raise EmbeddingError("Ark embeddings returned invalid JSON") from None
+        raise EmbeddingError(f"{provider} embeddings returned invalid JSON") from None
     if not isinstance(body, dict) or body.get("model") != model:
-        raise EmbeddingError(f"Ark response did not confirm the required model {model}")
+        raise EmbeddingError(f"{provider} response did not confirm the required model {model}")
     rows = body.get("data")
     if model == MODEL_ID:
         if not isinstance(rows, dict) or count != 1:
             raise EmbeddingError("Ark multimodal embeddings must return a single dense vector")
         return [_vector(rows.get("embedding"))]
     if not isinstance(rows, list) or len(rows) != count:
-        raise EmbeddingError("Ark returned the wrong number of embeddings")
+        raise EmbeddingError(f"{provider} returned the wrong number of embeddings")
     by_index = {}
     for row in rows:
         if not isinstance(row, dict):
-            raise EmbeddingError("Ark returned an invalid embedding row")
+            raise EmbeddingError(f"{provider} returned an invalid embedding row")
         index = row.get("index")
         if type(index) is not int or not 0 <= index < count or index in by_index:
-            raise EmbeddingError("Ark returned a missing, duplicate, or invalid embedding index")
+            raise EmbeddingError(
+                f"{provider} returned a missing, duplicate, or invalid embedding index"
+            )
         by_index[index] = _vector(row.get("embedding"))
     return [by_index[i] for i in range(count)]
 
@@ -156,6 +166,68 @@ class ArkTextEmbedder:
             raise EmbeddingError("Ark returned inconsistent embedding dimensions")
         self.receipts = tuple(receipts)
         return tuple(vectors)
+
+
+def requested_embedding_model(explicit: str | None = None) -> EmbeddingModel | None:
+    """A model name enables embeddings; provider credentials alone do not."""
+    for value in (explicit, os.getenv("NURSE_EMBEDDING_MODEL"), os.getenv("ARK_EMBEDDING_MODEL")):
+        if value and (model := value.strip()):
+            if model not in (MODEL_ID, TEXT_MODEL_ID, OPENAI_MODEL_ID):
+                raise EmbeddingError("unsupported history embedding model")
+            return cast(EmbeddingModel, model)
+    return None
+
+
+class OpenAITextEmbedder:
+    """Embed identical evidence documents using the pinned OpenAI model."""
+
+    model_id = OPENAI_MODEL_ID
+
+    def __init__(self) -> None:
+        self.receipts: tuple[EmbeddingReceipt, ...] = ()
+
+    def embed(self, texts: Sequence[str]) -> tuple[tuple[float, ...], ...]:
+        self.receipts = ()
+        if isinstance(texts, str | bytes):
+            raise EmbeddingError("expected a sequence of evidence documents")
+        if not texts:
+            return ()
+        for text in texts:
+            _validate_text(text)
+        key = os.environ.get("OPENAI_API_KEY", "").strip()
+        if not key:
+            raise EmbeddingError("OPENAI_API_KEY is required for OpenAI history embeddings")
+        vectors = []
+        receipts = []
+        try:
+            with httpx.Client(timeout=60.0, follow_redirects=False) as client:
+                for start in range(0, len(texts), _BATCH_SIZE):
+                    batch = list(texts[start : start + _BATCH_SIZE])
+                    response = client.post(
+                        OPENAI_EMBEDDINGS_URL,
+                        headers={"Authorization": f"Bearer {key}"},
+                        json={"model": self.model_id, "input": batch, "encoding_format": "float"},
+                    )
+                    result = _decode_response(response, len(batch), self.model_id)
+                    if any(len(vector) != 1536 for vector in result):
+                        raise EmbeddingError("OpenAI returned unexpected embedding dimensions")
+                    vectors.extend(result)
+                    receipts.append(EmbeddingReceipt(
+                        self.model_id, len(batch), 1536, _request_id(response)
+                    ))
+        except httpx.RequestError as exc:
+            reason = type(exc).__name__
+            raise EmbeddingError(f"OpenAI embeddings request failed ({reason})") from None
+        self.receipts = tuple(receipts)
+        return tuple(vectors)
+
+
+def make_embedder(model: str) -> ArkTextEmbedder | OpenAITextEmbedder:
+    if model == OPENAI_MODEL_ID:
+        return OpenAITextEmbedder()
+    if model in (MODEL_ID, TEXT_MODEL_ID):
+        return ArkTextEmbedder(model)
+    raise EmbeddingError("unsupported history embedding model")
 
 
 def rank_history_vectors(

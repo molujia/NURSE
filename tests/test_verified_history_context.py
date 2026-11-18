@@ -66,6 +66,34 @@ def test_composition_pins_embedding_model_before_the_core_runs():
         check_history_receipt(embedded, receipt)
 
 
+def test_model_and_profile_are_pinned_when_preparing_a_v5_plan(monkeypatch):
+    from nurse_rcl.v2.live.ops_sre_gplus_case import (
+        GplusAmplitudeQualityPlan,
+        check_history_receipt,
+        composition_grant,
+        composition_sha256,
+    )
+
+    settings = dict(core_plan_path="/plans/core.json", core_plan_sha256="b" * 64,
+                    run_root="/results", investigation_decision_limit=2,
+                    historical_library_path="/input/reviewed.json",
+                    historical_library_sha256="e" * 64, historical_query_group_id="query")
+    monkeypatch.delenv("NURSE_EMBEDDING_MODEL", raising=False)
+    monkeypatch.delenv("ARK_EMBEDDING_MODEL", raising=False)
+    rule = GplusAmplitudeQualityPlan(**settings)
+    assert composition_grant(rule)["history_method"] == "fixed-rule"
+    monkeypatch.setenv("NURSE_EMBEDDING_MODEL", "text-embedding-3-small")
+    embedded = GplusAmplitudeQualityPlan(**settings)
+    assert composition_grant(embedded)["history_method"] == "embedding"
+    assert composition_sha256(embedded) != composition_sha256(rule)
+    assert GplusAmplitudeQualityPlan.model_validate_json(rule.model_dump_json()) == rule
+    receipt = dict(library_sha256="e" * 64, model="text-embedding-3-small", method="embedding",
+                   evidence_profile="amplitude-quality", metric="euclidean", rule_id=None)
+    check_history_receipt(embedded, receipt)
+    with pytest.raises(ValueError, match="profile"):
+        check_history_receipt(embedded, dict(receipt, evidence_profile="direction-only"))
+
+
 def test_focused_request_sends_history_as_untrusted_side_information():
     from nurse_rcl.v2.live.ops_sre_brief_exchange import _body, _request
     from nurse_rcl.v2.live.ops_sre_focused_exchange import FOCUSED_PROTOCOL

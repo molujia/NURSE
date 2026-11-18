@@ -18,10 +18,13 @@ from typing import Any
 from nurse_rcl.v2.live.fixed_history_similarity import RULE_ID, fixed_history_scores
 from nurse_rcl.v2.live.semantic_history_retrieval import (
     DEFAULT_TOP_K,
-    ArkTextEmbedder,
+    make_embedder,
     rank_history_vectors,
+    requested_embedding_model,
 )
 from nurse_rcl.v2.live.verified_history import (
+    AMPLITUDE_QUALITY_PROFILE,
+    PROJECTION_V2,
     document_text,
     eligible_cases,
     load_document,
@@ -74,7 +77,8 @@ def _bm25_scores(query: str, docs: Mapping[str, str]) -> dict[str, float]:
     return scores
 
 
-def rank(library_path: Path, query_manifest: Path, expected_sha256: str | None) -> dict[str, Any]:
+def rank(library_path: Path, query_manifest: Path, expected_sha256: str | None,
+         *, embedding_model: str | None = None) -> dict[str, Any]:
     library, digest = read_library(library_path, expected_sha256=expected_sha256)
     if library["review_policy"] != "human-reviewed":
         raise ValueError("formal retrieval evaluation requires a human-reviewed library")
@@ -97,6 +101,10 @@ def rank(library_path: Path, query_manifest: Path, expected_sha256: str | None) 
         if qid in archived_cases or group in archived_groups:
             raise ValueError("query and history cases and groups must be disjoint")
         eligible = eligible_cases(library, doc, group)
+        if doc["schema_version"] != PROJECTION_V2 or any(
+            case["document"]["schema_version"] != PROJECTION_V2 for case in eligible
+        ):
+            raise ValueError("re-project and review cases for the amplitude-and-quality evaluation")
         qtext = document_text(doc)
         pool = []
         if eligible and qtext:
@@ -112,7 +120,10 @@ def rank(library_path: Path, query_manifest: Path, expected_sha256: str | None) 
                 unique_texts.setdefault(text, len(unique_texts))
             pool.append(cid)
         queries.append((qid, group, qtext, sorted(pool)))
-    provider = ArkTextEmbedder()
+    selected_model = requested_embedding_model(embedding_model)
+    if selected_model is None:
+        raise ValueError("vector comparison requires --embedding-model or NURSE_EMBEDDING_MODEL")
+    provider = make_embedder(selected_model)
     vectors = provider.embed(list(unique_texts))
     norms = [math.hypot(*v) for v in vectors]
     if any(not math.isfinite(norm) or norm == 0 for norm in norms):
@@ -152,8 +163,19 @@ def rank(library_path: Path, query_manifest: Path, expected_sha256: str | None) 
             "cosine": cosine_order,
             "cosine_similarities": [similarity[cid] for cid in cosine_order],
         })
+    paired_inputs = {
+        "library": digest,
+        "profile": AMPLITUDE_QUALITY_PROFILE,
+        "queries": sorted((q["case_id"], q["group_id"], q["query_text_sha256"], q["eligible_ids"])
+                          for q in out),
+    }
+    comparison_pin = hashlib.sha256(
+        json.dumps(paired_inputs, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
     return {
         "schema": RANK_SCHEMA, "rule_id": RULE_ID, "library_sha256": digest,
+        "evidence_profile": AMPLITUDE_QUALITY_PROFILE,
+        "comparison_input_sha256": comparison_pin,
         "model": provider.model_id,
         "receipts": [asdict(r) for r in provider.receipts], "history_groups": history_groups,
         "queries": out, "vector_norm_range": [min(norms), max(norms)] if norms else None,
@@ -428,6 +450,8 @@ def score(
             "label_scope": "service-only" if service_only else "service-and-mechanism",
             "k": k, "library_sha256": ranks.get("library_sha256"), "seed": seed,
             "model": ranks["model"], "rule_id": ranks.get("rule_id"),
+            "evidence_profile": ranks.get("evidence_profile"),
+            "comparison_input_sha256": ranks.get("comparison_input_sha256"),
             "vector_norm_range": ranks.get("vector_norm_range"),
             "bootstrap_replicates": replicates, "relevance": reports}
 
@@ -438,6 +462,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ranking = modes.add_parser("rank", help="freeze rankings without access to relevance labels")
     ranking.add_argument("--library", required=True, type=Path)
     ranking.add_argument("--library-sha256")
+    ranking.add_argument("--embedding-model", help="Model used for the vector comparison")
     ranking.add_argument("--queries", required=True, type=Path)
     scoring = modes.add_parser("score", help="join independently verified labels after ranking")
     scoring.add_argument("--ranks", required=True, type=Path)
@@ -454,7 +479,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.out.exists():
             raise ValueError("output already exists; choose a fresh path for frozen results")
         if args.mode == "rank":
-            result = rank(args.library, args.queries, args.library_sha256)
+            result = rank(args.library, args.queries, args.library_sha256,
+                          embedding_model=args.embedding_model)
         else:
             raw_ranks, raw_labels = args.ranks.read_bytes(), args.labels.read_bytes()
             result = score(json.loads(raw_ranks), json.loads(raw_labels), k=args.k,

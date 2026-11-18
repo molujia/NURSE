@@ -50,7 +50,9 @@ from nurse_rcl.v2.live.ops_sre_stage_handoff import (
 from nurse_rcl.v2.live.ops_sre_stage_handoff import (
     stage_report_context,
 )
+from nurse_rcl.v2.live.semantic_history_retrieval import EmbeddingModel, requested_embedding_model
 from nurse_rcl.v2.live.staged_case import require_plain_path
+from nurse_rcl.v2.live.verified_history import AMPLITUDE_QUALITY_PROFILE, LEGACY_PROFILE
 
 
 class GplusCompositionPlan(StrictFrozenModel):
@@ -91,7 +93,20 @@ class GplusHistoryMethodPlan(GplusHistoricalCompositionPlan):
     history_method: HistoryMethod = DEFAULT_HISTORY_METHOD
 
 
+class GplusAmplitudeQualityPlan(GplusHistoricalCompositionPlan):
+    schema_version: Literal["nurse.v2.gplus-one-case-composition/5"] = (
+        "nurse.v2.gplus-one-case-composition/5"  # type: ignore[assignment]
+    )
+    # Canonical plans include either the resolved model ID or null. Re-reading
+    # a pinned plan never depends on the inspecting process's environment.
+    history_embedding_model: EmbeddingModel | None = Field(  # type: ignore[assignment]
+        default_factory=lambda: requested_embedding_model()
+    )
+
+
 def _history_method(plan: GplusHistoricalCompositionPlan) -> HistoryMethod:
+    if isinstance(plan, GplusAmplitudeQualityPlan):
+        return "embedding" if plan.history_embedding_model else "fixed-rule"
     # Version 3 pinned a specific Ark model and always used Euclidean distance.
     return plan.history_method if isinstance(plan, GplusHistoryMethodPlan) else "embedding"
 
@@ -102,12 +117,15 @@ def check_history_receipt(plan: GplusHistoricalCompositionPlan, retrieval: dict[
     if (retrieval["library_sha256"] != plan.historical_library_sha256
             or retrieval["model"] != expected_model):
         raise ValueError("historical retrieval model or library differs from its plan")
-    if isinstance(plan, GplusHistoryMethodPlan) and (
+    if isinstance(plan, GplusHistoryMethodPlan | GplusAmplitudeQualityPlan) and (
         retrieval.get("method") != method
         or retrieval.get("metric") != ("euclidean" if method == "embedding" else RULE_DISTANCE)
         or retrieval.get("rule_id") != (RULE_ID if method == "fixed-rule" else None)
     ):
         raise ValueError("historical retrieval method differs from its plan")
+    if (isinstance(plan, GplusAmplitudeQualityPlan)
+            and retrieval.get("evidence_profile") != AMPLITUDE_QUALITY_PROFILE):
+        raise ValueError("historical evidence profile differs from its plan")
 
 
 def composition_sha256(plan: GplusCompositionPlan) -> str:
@@ -145,6 +163,10 @@ def composition_grant(plan: GplusCompositionPlan) -> dict[str, Any]:
     if isinstance(plan, GplusHistoryMethodPlan):
         grant.update(schema_version="nurse.v2.gplus-composition-grant/4",
                      history_method=plan.history_method)
+    if isinstance(plan, GplusAmplitudeQualityPlan):
+        grant.update(schema_version="nurse.v2.gplus-composition-grant/5",
+                     history_method=_history_method(plan),
+                     evidence_profile=AMPLITUDE_QUALITY_PROFILE)
     return grant
 
 
@@ -157,6 +179,7 @@ def read_composition(path: Path, pin: str) -> GplusCompositionPlan:
         "nurse.v2.gplus-one-case-composition/2": GplusFocusedCompositionPlan,
         "nurse.v2.gplus-one-case-composition/3": GplusHistoricalCompositionPlan,
         "nurse.v2.gplus-one-case-composition/4": GplusHistoryMethodPlan,
+        "nurse.v2.gplus-one-case-composition/5": GplusAmplitudeQualityPlan,
     }.get(value.get("schema_version"), GplusCompositionPlan)
     plan = model.model_validate_json(raw)
     if sha256_hex(raw) != pin or raw != canonical_json_bytes(plan.model_dump(mode="json")):
@@ -314,6 +337,8 @@ def run_gplus_case(
                     expected_library_sha256=plan.historical_library_sha256,
                     embedding_model=plan.history_embedding_model,
                     method=_history_method(plan),
+                    profile=(AMPLITUDE_QUALITY_PROFILE
+                             if isinstance(plan, GplusAmplitudeQualityPlan) else LEGACY_PROFILE),
                 )
                 check_history_receipt(plan, retrieval)
                 history = HistoricalContext.from_retrieval(

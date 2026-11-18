@@ -5,7 +5,7 @@ import json
 import pytest
 
 from nurse_rcl.evaluation import history_experiment as experiment
-from nurse_rcl.v2.live.verified_history import HUMAN, LIBRARY, PROJECTION
+from nurse_rcl.v2.live.verified_history import HUMAN, LIBRARY, PROJECTION_V2
 
 
 @pytest.mark.parametrize(("n", "r", "k"), [(3, 1, 1), (4, 2, 2), (3, 3, 5), (3, 0, 2)])
@@ -126,7 +126,7 @@ def test_score_refuses_inconsistent_rank_artifacts(field, value, error):
 def test_rank_never_embeds_private_or_future_records_and_reuses_equal_text(tmp_path, monkeypatch):
     def document(index, decision, signal):
         return {
-            "schema_version": PROJECTION, "case_id": f"opq_{index:032x}",
+            "schema_version": PROJECTION_V2, "case_id": f"opq_{index:032x}",
             "decision_time_ns": decision,
             "evidence": [{
                 "kind": "episode", "signal": signal, "state": "up",
@@ -166,11 +166,12 @@ def test_rank_never_embeds_private_or_future_records_and_reuses_equal_text(tmp_p
             sent.extend(texts)
             return [[4.0 if "cpu" in t else 1.0, float("errors" in t)] for t in texts]
 
-    monkeypatch.setattr(experiment, "ArkTextEmbedder", Embedder)
+    monkeypatch.setattr(experiment, "make_embedder", lambda model: Embedder())
     ranks_path, score_path = tmp_path / "ranks.json", tmp_path / "score.json"
     pin = hashlib.sha256(path.read_bytes()).hexdigest()
     rank_args = [
-        "rank", "--library", str(path), "--queries", str(manifest), "--out", str(ranks_path)
+        "rank", "--library", str(path), "--queries", str(manifest), "--out", str(ranks_path),
+        "--embedding-model", "text-embedding-3-small",
     ]
     with pytest.raises(SystemExit):
         experiment.main([*rank_args, "--library-sha256", "0" * 64])

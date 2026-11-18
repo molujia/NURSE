@@ -12,7 +12,6 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
 
-from nurse_rcl.v2.live.fixed_history_similarity import DEFAULT_HISTORY_METHOD
 from nurse_rcl.v2.live.verified_history import (
     BENCHMARK,
     HUMAN,
@@ -269,9 +268,9 @@ def main(argv: list[str] | None = None) -> int:
     retrieve.add_argument("--library-sha256")
     retrieve.add_argument("--group-id", required=True)
     retrieve.add_argument("--top-k", type=int, default=5)
-    retrieve.add_argument(
-        "--method", choices=("embedding", "fixed-rule"), default=DEFAULT_HISTORY_METHOD
-    )
+    retrieve.add_argument("--embedding-model", help="Model ID (also NURSE_EMBEDDING_MODEL)")
+    retrieve.add_argument("--method", choices=("embedding", "fixed-rule"),
+                          help="Override automatic model-based selection for a comparison")
     for cmd in (build, retrieve):
         cmd.add_argument("--benchmark-reference", action="store_true")
     for cmd in (project, prepare, build, retrieve, export):
@@ -299,6 +298,7 @@ def main(argv: list[str] | None = None) -> int:
                 group_id=args.group_id,
                 top_k=args.top_k,
                 method=args.method,
+                embedding_model=args.embedding_model,
                 benchmark_reference=args.benchmark_reference,
             )
         _write(args.out, result)

@@ -112,3 +112,64 @@ def test_error_does_not_echo_incident_or_key(monkeypatch):
     with pytest.raises(retrieval.EmbeddingError) as caught:
         retrieval.ArkTextEmbedder().embed(["current evidence"])
     assert str(caught.value) == "Ark embeddings returned HTTP 403 (ModelNotOpen)"
+
+
+def test_configured_model_precedence(monkeypatch):
+    monkeypatch.delenv("NURSE_EMBEDDING_MODEL", raising=False)
+    monkeypatch.delenv("ARK_EMBEDDING_MODEL", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "configured-key")
+    monkeypatch.setenv("ARK_API_KEY", "configured-key")
+    assert retrieval.requested_embedding_model() is None
+    monkeypatch.setenv("ARK_EMBEDDING_MODEL", retrieval.TEXT_MODEL_ID)
+    assert retrieval.requested_embedding_model() == retrieval.TEXT_MODEL_ID
+    monkeypatch.setenv("NURSE_EMBEDDING_MODEL", retrieval.OPENAI_MODEL_ID)
+    assert retrieval.requested_embedding_model() == retrieval.OPENAI_MODEL_ID
+    assert retrieval.requested_embedding_model(retrieval.MODEL_ID) == retrieval.MODEL_ID
+    with pytest.raises(retrieval.EmbeddingError, match="unsupported"):
+        retrieval.requested_embedding_model("invalid")
+    assert isinstance(retrieval.make_embedder(retrieval.MODEL_ID), retrieval.ArkTextEmbedder)
+
+
+def test_openai_request_isolated_and_response_reordered(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
+    monkeypatch.setenv("ARK_EMBEDDING_ENDPOINT_ID", "ep-ark-only")
+
+    def handler(request):
+        assert str(request.url) == "https://api.openai.com/v1/embeddings"
+        assert request.headers["Authorization"] == "Bearer openai-key"
+        assert json.loads(request.content) == {
+            "model": "text-embedding-3-small", "input": ["one", "two"], "encoding_format": "float"
+        }
+        return httpx.Response(200, headers={"x-request-id": "req-42"}, json={
+            "model": "text-embedding-3-small", "data": [
+                {"index": i, "embedding": [float(i)] * 1536} for i in (1, 0)
+            ],
+        })
+
+    install_transport(monkeypatch, handler)
+    provider = retrieval.make_embedder(retrieval.OPENAI_MODEL_ID)
+    assert provider.embed(["one", "two"]) == ((0.0,) * 1536, (1.0,) * 1536)
+    assert provider.receipts == (retrieval.EmbeddingReceipt(provider.model_id, 2, 1536, "req-42"),)
+
+
+@pytest.mark.parametrize("status,body,reason", [
+    (401, {"error": {"message": "secret details"}}, "HTTP 401"),
+    (200, {"model": "other"}, "required model"),
+    (200, {"model": retrieval.OPENAI_MODEL_ID, "data": [{"index": 0, "embedding": [1]}]},
+     "dimensions"),
+])
+def test_openai_invalid_responses_do_not_fall_back(monkeypatch, status, body, reason):
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
+    install_transport(monkeypatch, lambda _: httpx.Response(status, json=body))
+    provider = retrieval.OpenAITextEmbedder()
+    with pytest.raises(retrieval.EmbeddingError, match=reason) as caught:
+        provider.embed(["secret details"])
+    assert "secret details" not in str(caught.value)
+    assert provider.receipts == ()
+
+
+def test_openai_requires_own_key(monkeypatch):
+    monkeypatch.setenv("ARK_API_KEY", "ark-only")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with pytest.raises(retrieval.EmbeddingError, match="OPENAI_API_KEY"):
+        retrieval.make_embedder(retrieval.OPENAI_MODEL_ID).embed(["one"])

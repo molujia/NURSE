@@ -26,14 +26,18 @@ python -m nurse_rcl.evaluation.history_library build-library --candidates histor
 
 ## 2. 运行检索与独立评分
 
-启用历史检索时，新版计划和命令行默认在本地运行固定规则。两种方法读取逐字相同的规范观测文本。规则从每条观测提取「证据种类＋信号＋状态」的完整特征（权重 3）、「种类＋信号」（权重 1），以及种类内的指标名称分词（每条观测合计权重 1）。重复特征取最大权重。每个特征再乘以仅用本查询合格历史池估计的 IDF，即 `1 + ln((n+1)/(df+1))`。两个案例对应特征的最小权重之和除以最大权重之和，得到加权 Jaccard 相似度。回执保存规则版本及距离 `1 − 相似度`。
+新版检索的两种方法读取逐字相同的幅度与质量文本。对每条保留的窗口摘要，标准化中位数变化绝对值按 1、3、6 切分为四档，代表证据的观测质量按 0.5、0.8 切分为三档；恰在边界的值归入较高一档。持续异常和机制门控保留各自的证据语义。正式比较应从冻结核心重新导出版本 2 投影并复核历史库。旧版库仍可用于事件调查，旧窗口摘要仅提供此前记录的字段。
 
-指定 `--method embedding` 可使用火山方舟模型。程序从 `ARK_API_KEY` 读取凭据，默认使用 `doubao-embedding-vision-251215` 的纯文本输入和原始向量欧氏距离。两种方法均按距离升序取前五个，可调上限；同分时按匿名案例 ID 确定展示顺序。历史功能由运行计划显式开启。[运行说明](nurse_final_focused_quickstart.md)
+没有配置嵌入模型时使用本地规则。它匹配证据种类、信号、方向，并对同一观测中的幅度档、质量档分别提取特征。完整状态或属性值匹配权重为 3，种类内的信号或属性名称匹配权重为 1，分词可部分匹配。重复特征取最大权重；历史池中的罕见特征乘以较高的 IDF，即 `1 + ln((n+1)/(df+1))`。两例对应权重的最小值之和除以最大值之和得到相似度，按 `1 − 相似度` 升序取前五例。
+
+指定 `--embedding-model` 或 `NURSE_EMBEDDING_MODEL` 后，程序使用所选模型编码整份案例，以同一模型空间内的原始向量欧氏距离排序。豆包和 OpenAI 的凭据分别为 `ARK_API_KEY`、`OPENAI_API_KEY`。单次检索可用 `--method fixed-rule` 显式运行规则对照。两种方法均使用同一时间截止和候选池，同分时按匿名 ID 确定展示顺序。[运行说明](nurse_final_focused_quickstart.md)
 
 ```bash
 python -m nurse_rcl.evaluation.history_library retrieve --query documents/query.json --group-id GROUP --library library.json --library-sha256 SHA256 --top-k 5 --out retrieval.json
-python -m nurse_rcl.evaluation.history_experiment rank --library library.json --library-sha256 SHA256 --queries queries.json --out ranks.json
-python -m nurse_rcl.evaluation.history_experiment score --ranks ranks.json --labels private/labels.json --out scores.json
+python -m nurse_rcl.evaluation.history_experiment rank --embedding-model doubao-embedding-vision-251215 --library library.json --library-sha256 SHA256 --queries queries.json --out ranks-doubao.json
+python -m nurse_rcl.evaluation.history_experiment rank --embedding-model text-embedding-3-small --library library.json --library-sha256 SHA256 --queries queries.json --out ranks-openai.json
+python -m nurse_rcl.evaluation.history_experiment score --ranks ranks-doubao.json --labels private/labels.json --out scores-doubao.json
+python -m nurse_rcl.evaluation.history_experiment score --ranks ranks-openai.json --labels private/labels.json --out scores-openai.json
 ```
 
 正式实验分两次执行。排序命令读取 `queries.json`（顶层 `queries` 数组，每行只有 `document_path` 和 `group_id`），按所有合格历史案例保存完整顺序。先封存此文件及其摘要，再解封独立核验的标签。`private/labels.json` 的 `labels` 数组包含查询与历史案例的 `case_id`、`service` 和 `mechanism`。如果两侧均有独立核验表，可以用以下命令导出私有标签；无可编码证据的查询也应在独立标签清单和覆盖率分母中保留。
@@ -43,6 +47,8 @@ python -m nurse_rcl.evaluation.history_library export-labels --candidates histor
 ```
 
 若队列只有经核实的根因服务，可用 `score --service-only`（其余参数同上）只评估同服务相关性。标准的机制实验使用事先确定的单根因、单机制标注队列。多故障或标签不确定的事件应按预定规则单独统计并披露数量。
+
+同一数据集的两个评分文件应有相同的 `comparison_input_sha256` 与 `labels_sha256`。前者绑定库、查询文本、查询组和逐查询候选集。主表每个数据集只填写一行固定规则，将每个模型相对于该规则的配对差值及区间分别列出。
 
 ## 3. 如何判断是否有效
 

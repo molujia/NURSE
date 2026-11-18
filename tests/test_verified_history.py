@@ -292,7 +292,7 @@ def test_two_methods_use_identical_text_and_rule_never_opens_ark(monkeypatch):
         raise AssertionError("rule retrieval must work offline")
 
     monkeypatch.setattr(history, "fixed_history_scores", record_rule)
-    monkeypatch.setattr(history.ArkTextEmbedder, "__init__", deny_network)
+    monkeypatch.setattr(history, "make_embedder", deny_network)
     fixed = history.retrieve_document(query, library, "b" * 64, group_id="q", method="fixed-rule")
 
     class Recorder:
@@ -308,3 +308,32 @@ def test_two_methods_use_identical_text_and_rule_never_opens_ark(monkeypatch):
     assert fixed["matches"][0]["case_id"] == vector["matches"][0]["case_id"] == case_id(3)
     assert fixed["metric"] == history.RULE_DISTANCE and fixed["model"] is None
     assert fixed["provider_receipts"] == [] and fixed["matches"][0]["distance"] == 0
+
+
+def test_auto_selects_only_a_configured_embedding_model(monkeypatch):
+    query, doc = projection(1, 40), projection(2, 20)
+    case = dict(case_id=doc["case_id"], group_id="h", available_at_ns=25,
+                document=doc, review_receipt_sha256="a" * 64)
+    library = dict(schema_version=history.LIBRARY, review_policy=history.HUMAN, cases=[case])
+    monkeypatch.delenv("NURSE_EMBEDDING_MODEL", raising=False)
+    monkeypatch.delenv("ARK_EMBEDDING_MODEL", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "unused")
+    monkeypatch.setenv("ARK_API_KEY", "unused")
+    calls = []
+
+    class Recorder:
+        model_id = "text-embedding-3-small"
+
+        def embed(self, texts):
+            calls.append(list(texts))
+            return [[1] for _ in texts]
+
+    monkeypatch.setattr(history, "make_embedder", lambda model: Recorder())
+    def retrieve():
+        return history.retrieve_document(query, library, "b" * 64, group_id="q")
+
+    assert retrieve()["method"] == "fixed-rule" and not calls
+    monkeypatch.setenv("NURSE_EMBEDDING_MODEL", Recorder.model_id)
+    result = retrieve()
+    assert result["method"] == "embedding" and result["model"] == Recorder.model_id
+    assert result["legacy_candidate_count"] == 1 and len(calls) == 1
