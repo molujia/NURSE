@@ -270,3 +270,41 @@ def test_reference_and_label_fields_do_not_enter_embedding():
     fact["ground_truth"] = "private label"
     with pytest.raises(ValueError):
         history.document_text(doc)
+
+
+def test_two_methods_use_identical_text_and_rule_never_opens_ark(monkeypatch):
+    query = projection(1, 40)
+    cases = []
+    for number, state in ((2, "down"), (3, "up")):
+        doc = projection(number, 20)
+        doc["evidence"][0]["state"] = state
+        cases.append(dict(case_id=doc["case_id"], group_id=str(number), available_at_ns=25,
+                          document=doc, review_receipt_sha256="a" * 64))
+    library = dict(schema_version=history.LIBRARY, review_policy=history.HUMAN, cases=cases)
+    seen = []
+    real_rule = history.fixed_history_scores
+
+    def record_rule(query_text, texts):
+        seen.append([query_text, *texts.values()])
+        return real_rule(query_text, texts)
+
+    def deny_network(*_args, **_kwargs):
+        raise AssertionError("rule retrieval must work offline")
+
+    monkeypatch.setattr(history, "fixed_history_scores", record_rule)
+    monkeypatch.setattr(history.ArkTextEmbedder, "__init__", deny_network)
+    fixed = history.retrieve_document(query, library, "b" * 64, group_id="q", method="fixed-rule")
+
+    class Recorder:
+        model_id = "unit-test"
+
+        def embed(self, texts):
+            seen.append(list(texts))
+            return [[0], [1], [0]]
+
+    vector = history.retrieve_document(query, library, "b" * 64, group_id="q",
+                                       method="embedding", embedder=Recorder())
+    assert seen[0] == seen[1] and len(seen[0]) == 3
+    assert fixed["matches"][0]["case_id"] == vector["matches"][0]["case_id"] == case_id(3)
+    assert fixed["metric"] == history.RULE_DISTANCE and fixed["model"] is None
+    assert fixed["provider_receipts"] == [] and fixed["matches"][0]["distance"] == 0

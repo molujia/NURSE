@@ -29,7 +29,7 @@ def orders(qid, group, evidence, pool, semantic, lexical):
 
 def test_paired_metrics_coverage_and_one_group_limit():
     rankings = {
-        "schema": experiment.RANK_SCHEMA, "model": "synthetic", "library_sha256": "a" * 64,
+        "schema": experiment.LEGACY_RANK_SCHEMA, "model": "synthetic", "library_sha256": "a" * 64,
         "vector_norm_range": [1.0, 1.0], "history_groups": {"h1": "a", "h2": "b"}, "queries": [
             orders("q1", "g1", True, ["h1", "h2"], ["h1", "h2"], ["h2", "h1"]),
             orders("q2", "g1", True, ["h2"], ["h2"], ["h2"]),
@@ -78,7 +78,7 @@ def test_equal_distances_bound_rank_dependent_conclusions():
 
 def test_service_only_cohort_requires_explicit_cli_mode(tmp_path):
     ranks = {
-        "schema": experiment.RANK_SCHEMA, "model": "test", "library_sha256": "c" * 64,
+        "schema": experiment.LEGACY_RANK_SCHEMA, "model": "test", "library_sha256": "c" * 64,
         "history_groups": {"a": "g1"}, "vector_norm_range": [1, 2],
         "queries": [orders("q", "g", True, ["a"], ["a"], ["a"])],
     }
@@ -116,7 +116,7 @@ def test_score_refuses_inconsistent_rank_artifacts(field, value, error):
     q["bm25_scores"] = [0.0, 0.0]
     q[field] = value
     ranks = {
-        "schema": experiment.RANK_SCHEMA, "model": "synthetic", "library_sha256": "b" * 64,
+        "schema": experiment.LEGACY_RANK_SCHEMA, "model": "synthetic", "library_sha256": "b" * 64,
         "history_groups": {"a": "g1", "b": "g2"}, "queries": [q], "vector_norm_range": [1, 2],
     }
     with pytest.raises(ValueError, match=error):
@@ -182,6 +182,8 @@ def test_rank_never_embeds_private_or_future_records_and_reuses_equal_text(tmp_p
     assert frozen["queries"][0]["euclidean"] == frozen["queries"][0]["bm25"] == [
         near["case_id"], far["case_id"],
     ]
+    assert frozen["rule_id"] == experiment.RULE_ID
+    assert frozen["queries"][0]["fixed_rule_scores"] == [1.0, 0.0]
     assert frozen["queries"][0]["cosine"] == frozen["queries"][0]["euclidean"]
     assert frozen["queries"][1]["cosine"] == [near["case_id"], far["case_id"]]
     assert frozen["queries"][1]["euclidean"] == [far["case_id"], near["case_id"]]
@@ -211,3 +213,19 @@ def test_rank_never_embeds_private_or_future_records_and_reuses_equal_text(tmp_p
     save("library.json", lib)
     with pytest.raises(ValueError, match="human-reviewed"):
         experiment.rank(path, manifest, None)
+
+def test_tie_neutral_rule_vs_embedding_at_cutoff():
+    q = orders("q", "query", True, ["a", "b"], ["a", "b"], ["a", "b"])
+    q.update(fixed_rule=["a", "b"], fixed_rule_scores=[0.5, 0.5])
+    ranks = {"schema": experiment.RANK_SCHEMA, "rule_id": experiment.RULE_ID,
+             "model": "test", "library_sha256": "b" * 64, "history_groups": {"a": "x", "b": "y"},
+             "queries": [q], "vector_norm_range": [1, 1]}
+    labels = {"labels": [{"case_id": cid, "service": mech, "mechanism": mech}
+                         for cid, mech in [("q", "A"), ("a", "A"), ("b", "B")]]}
+    per = experiment.score(ranks, labels, k=1)["relevance"]["same_mechanism"]
+    expected = {"euclidean": 1.0, "fixed_rule": 0.5, "euclidean_minus_fixed_rule": 0.5}
+    assert per["per_query"][0]["tie_expected_ndcg_at_k"] == expected
+    assert per["all_query_mean_tie_expected_ndcg_at_k"] == expected
+    q.update(distances=[0.2, 0.2], fixed_rule_scores=[0.8, 0.5])
+    inverse = experiment.score(ranks, labels, k=1)["relevance"]["same_mechanism"]
+    assert inverse["all_query_mean_tie_expected_ndcg_at_k"]["euclidean_minus_fixed_rule"] == -0.5

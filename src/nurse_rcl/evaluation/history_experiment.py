@@ -15,6 +15,7 @@ from itertools import groupby
 from pathlib import Path
 from typing import Any
 
+from nurse_rcl.v2.live.fixed_history_similarity import RULE_ID, fixed_history_scores
 from nurse_rcl.v2.live.semantic_history_retrieval import (
     DEFAULT_TOP_K,
     ArkTextEmbedder,
@@ -27,10 +28,11 @@ from nurse_rcl.v2.live.verified_history import (
     read_library,
 )
 
-RANK_SCHEMA = "nurse.history-experiment.ranks/1"
+LEGACY_RANK_SCHEMA = "nurse.history-experiment.ranks/1"
+RANK_SCHEMA = "nurse.history-experiment.ranks/2"
 SCORE_SCHEMA = "nurse.history-experiment.scores/1"
-ORDERED_METHODS = ("euclidean", "bm25", "cosine")
-METHODS = (*ORDERED_METHODS, "uniform_random")
+LEGACY_METHODS = ("euclidean", "bm25", "cosine")
+ORDERED_METHODS = (*LEGACY_METHODS, "fixed_rule")
 METRICS = ("mrr", "ndcg_at_k", "recall_at_k", "hit_at_k")
 CaseLabel = tuple[str, str | None]
 Criteria = Callable[[CaseLabel, CaseLabel], bool]
@@ -119,6 +121,8 @@ def rank(library_path: Path, query_manifest: Path, expected_sha256: str | None) 
     out = []
     for qid, group, qtext, pool in queries:
         docs = {cid: history_texts[cid] for cid in pool}
+        rule = fixed_history_scores(qtext, docs) if qtext else {}
+        rule_order = sorted(rule, key=lambda cid: (-rule[cid], cid))
         lexical = _bm25_scores(qtext, docs) if qtext else {}
         lexical_order = sorted(lexical, key=lambda cid: (-lexical[cid], cid))
         if docs and qtext:
@@ -143,12 +147,14 @@ def rank(library_path: Path, query_manifest: Path, expected_sha256: str | None) 
             "query_has_evidence": bool(qtext),
             "query_text_sha256": hashlib.sha256(qtext.encode("utf-8")).hexdigest(),
             "euclidean": [m.case_id for m in matches], "distances": [m.distance for m in matches],
+            "fixed_rule": rule_order, "fixed_rule_scores": [rule[cid] for cid in rule_order],
             "bm25": lexical_order, "bm25_scores": [lexical[cid] for cid in lexical_order],
             "cosine": cosine_order,
             "cosine_similarities": [similarity[cid] for cid in cosine_order],
         })
     return {
-        "schema": RANK_SCHEMA, "library_sha256": digest, "model": provider.model_id,
+        "schema": RANK_SCHEMA, "rule_id": RULE_ID, "library_sha256": digest,
+        "model": provider.model_id,
         "receipts": [asdict(r) for r in provider.receipts], "history_groups": history_groups,
         "queries": out, "vector_norm_range": [min(norms), max(norms)] if norms else None,
     }
@@ -200,6 +206,25 @@ def _tie_sensitivity(q: dict[str, Any], relevant: set[str], k: int) -> tuple[boo
     return crosses, lo / ideal, hi / ideal
 
 
+def _expected_ndcg(
+    order: Sequence[str], scores: Sequence[float], relevant: set[str], k: int
+) -> float:
+    """Average binary nDCG over all permutations within exact-score ties."""
+    if not order or not relevant:
+        return 0.0
+    ideal = math.fsum(1 / math.log2(i + 2) for i in range(min(k, len(relevant))))
+    start, dcg = 0, 0.0
+    for _, block in groupby(zip(scores, order, strict=True), key=lambda item: item[0]):
+        ids = [cid for _, cid in block]
+        end = start + len(ids)
+        weight = math.fsum(1 / math.log2(i + 2) for i in range(start, min(k, end)))
+        dcg += weight * sum(cid in relevant for cid in ids) / len(ids)
+        if end >= k:
+            break
+        start = end
+    return dcg / ideal
+
+
 def _means(values: list[tuple[float, ...]]) -> dict[str, float | None]:
     if not values:
         return dict.fromkeys(METRICS)
@@ -215,25 +240,25 @@ def _percentile(values: list[float], p: float) -> float:
 
 def _paired(
     groups: Sequence[str], left: list[tuple[float, ...]], right: list[tuple[float, ...]],
-    replicates: int, seed: int,
+    replicates: int, seed: int, metrics: Sequence[str] = METRICS,
 ) -> dict[str, Any]:
-    sums: dict[str, list[float]] = defaultdict(lambda: [0.0] * len(METRICS))
+    sums: dict[str, list[float]] = defaultdict(lambda: [0.0] * len(metrics))
     sizes = Counter(groups)
     for group, lhs, rhs in zip(groups, left, right, strict=True):
         for i, (a, b) in enumerate(zip(lhs, rhs, strict=True)):
             sums[group][i] += a - b
     delta = {metric: sum(row[i] for row in sums.values()) / len(left) if left else None
-             for i, metric in enumerate(METRICS)}
-    intervals: dict[str, Any] = dict.fromkeys(METRICS)
+             for i, metric in enumerate(metrics)}
+    intervals: dict[str, Any] = dict.fromkeys(metrics)
     if len(sizes) >= 2:
-        samples: list[list[float]] = [[] for _ in METRICS]
+        samples: list[list[float]] = [[] for _ in metrics]
         rng, names = random.Random(seed), sorted(sizes)
         for _ in range(replicates):
             multiplicity = Counter(rng.choices(names, k=len(names)))
             n = sum(sizes[group] * count for group, count in multiplicity.items())
             for i, sample in enumerate(samples):
                 sample.append(sum(sums[g][i] * c for g, c in multiplicity.items()) / n)
-        for name, sample in zip(METRICS, samples, strict=True):
+        for name, sample in zip(metrics, samples, strict=True):
             sample.sort()
             intervals[name] = [_percentile(sample, 0.025), _percentile(sample, 0.975)]
     return {"mean_delta": delta, "paired_group_bootstrap_95pct": intervals,
@@ -241,8 +266,11 @@ def _paired(
 
 
 def _validated_queries(ranks: dict[str, Any]) -> list[dict[str, Any]]:
-    if not isinstance(ranks, dict) or ranks.get("schema") != RANK_SCHEMA:
+    if not isinstance(ranks, dict) or ranks.get("schema") not in (LEGACY_RANK_SCHEMA, RANK_SCHEMA):
         raise ValueError("unrecognized frozen rank schema")
+    has_rule = ranks["schema"] == RANK_SCHEMA
+    if has_rule and ranks.get("rule_id") != RULE_ID:
+        raise ValueError("unknown fixed semantic rule")
     _identifier(ranks.get("model"))
     if not re.fullmatch(r"[0-9a-f]{64}", str(ranks.get("library_sha256"))):
         raise ValueError("invalid frozen library digest")
@@ -265,7 +293,7 @@ def _validated_queries(ranks: dict[str, Any]) -> list[dict[str, Any]]:
         if type(row.get("query_has_evidence")) is not bool:
             raise ValueError("missing query evidence availability")
         rankable = pool if row["query_has_evidence"] else set()
-        for method in ORDERED_METHODS:
+        for method in (ORDERED_METHODS if has_rule else LEGACY_METHODS):
             order = row.get(method)
             if (
                 not isinstance(order, list)
@@ -278,7 +306,10 @@ def _validated_queries(ranks: dict[str, Any]) -> list[dict[str, Any]]:
             ("euclidean", "distances", 0.0, math.inf),
             ("bm25", "bm25_scores", 0.0, math.inf),
             ("cosine", "cosine_similarities", -1.0, 1.0),
+            ("fixed_rule", "fixed_rule_scores", 0.0, 1.0),
         ):
+            if method == "fixed_rule" and not has_rule:
+                continue
             values = row.get(field)
             if (
                 not isinstance(values, list) or len(values) != len(rankable)
@@ -308,6 +339,8 @@ def score(
     if type(k) is not int or k < 1 or type(replicates) is not int or replicates < 2:
         raise ValueError("k must be positive and bootstrap replicates must be at least two")
     queries = _validated_queries(ranks)
+    ordered = ORDERED_METHODS if ranks["schema"] == RANK_SCHEMA else LEGACY_METHODS
+    methods = (*ordered, "uniform_random")
     private: dict[str, CaseLabel] = {}
     for row in _rows(labels, "labels"):
         cid = _identifier(row.get("case_id"))
@@ -331,14 +364,14 @@ def score(
         positive_groups = []
         tie_intervals = []
         boundary_ties = 0
-        all_values: dict[str, list[tuple[float, ...]]] = {m: [] for m in METHODS}
-        positive: dict[str, list[tuple[float, ...]]] = {m: [] for m in METHODS}
+        all_values: dict[str, list[tuple[float, ...]]] = {m: [] for m in methods}
+        positive: dict[str, list[tuple[float, ...]]] = {m: [] for m in methods}
         for q in queries:
             qid, pool = q["case_id"], q["eligible_ids"]
             if qid not in private or any(cid not in private for cid in pool):
                 raise ValueError("missing private label for a ranked case")
             relevant = {cid for cid in pool if matches(private[qid], private[cid])}
-            values = {m: _measured(q[m], relevant, k) for m in ORDERED_METHODS}
+            values = {m: _measured(q[m], relevant, k) for m in ordered}
             values["uniform_random"] = _uniform(len(pool), len(relevant), k)
             crosses, lo, hi = _tie_sensitivity(q, relevant, k)
             boundary_ties += int(crosses)
@@ -348,6 +381,13 @@ def score(
                 "euclidean_tie_crosses_k": crosses, "euclidean_tie_ndcg_range": [lo, hi],
                 "methods": {m: dict(zip(METRICS, v, strict=True)) for m, v in values.items()},
             })
+            if "fixed_rule" in ordered:
+                euclidean = _expected_ndcg(q["euclidean"], q["distances"], relevant, k)
+                fixed = _expected_ndcg(q["fixed_rule"], q["fixed_rule_scores"], relevant, k)
+                per_query[-1]["tie_expected_ndcg_at_k"] = {
+                    "euclidean": euclidean, "fixed_rule": fixed,
+                    "euclidean_minus_fixed_rule": euclidean - fixed,
+                }
             if relevant:
                 positive_groups.append(q["group_id"])
                 tie_intervals.append((lo, hi))
@@ -369,15 +409,26 @@ def score(
             "positive_available_means": {m: _means(v) for m, v in positive.items()},
             "positive_available_paired_differences": {
                 m: _paired(positive_groups, positive["euclidean"], positive[m], replicates, seed)
-                for m in METHODS[1:]
+                for m in methods[1:]
             },
             "per_query": per_query,
         }
+        if "fixed_rule" in ordered:
+            rows = [q["tie_expected_ndcg_at_k"] for q in per_query]
+            reports[name]["all_query_mean_tie_expected_ndcg_at_k"] = {
+                field: math.fsum(row[field] for row in rows) / len(rows) for field in rows[0]
+            }
+            reports[name]["all_query_paired_tie_expected_ndcg_at_k"] = _paired(
+                [q["group_id"] for q in per_query], [(row["euclidean"],) for row in rows],
+                [(row["fixed_rule"],) for row in rows], replicates, seed, ("ndcg_at_k",)
+            )
     primary = "same_service" if service_only else "same_mechanism"
-    return {"schema": SCORE_SCHEMA, "primary": f"{primary}/positive_available/ndcg_at_k",
+    return {"schema": SCORE_SCHEMA, "primary": (f"{primary}/all_query_mean_tie_expected_ndcg_at_k"
+                    if "fixed_rule" in ordered else f"{primary}/positive_available/ndcg_at_k"),
             "label_scope": "service-only" if service_only else "service-and-mechanism",
             "k": k, "library_sha256": ranks.get("library_sha256"), "seed": seed,
-            "model": ranks["model"], "vector_norm_range": ranks.get("vector_norm_range"),
+            "model": ranks["model"], "rule_id": ranks.get("rule_id"),
+            "vector_norm_range": ranks.get("vector_norm_range"),
             "bootstrap_replicates": replicates, "relevance": reports}
 
 

@@ -10,6 +10,13 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from nurse_rcl.v2.live.fixed_history_similarity import (
+    DEFAULT_HISTORY_METHOD,
+    RULE_DISTANCE,
+    RULE_ID,
+    HistoryMethod,
+    fixed_history_scores,
+)
 from nurse_rcl.v2.live.semantic_history_retrieval import (
     MODEL_ID,
     ArkTextEmbedder,
@@ -268,6 +275,7 @@ def retrieve_document(
     group_id: str,
     top_k: int = 5,
     embedder: TextEmbedder | None = None,
+    method: HistoryMethod = DEFAULT_HISTORY_METHOD,
     benchmark_reference: bool = False,
 ) -> JsonRecord:
     validate_document(query)
@@ -277,20 +285,29 @@ def retrieve_document(
     if type(top_k) is not int or top_k <= 0:
         raise ValueError("top_k must be a positive integer")
     pool = {c["case_id"]: c["document"] for c in eligible_cases(library, query, group_id)}
-    model = embedder if embedder is not None else ArkTextEmbedder()
+    if method not in ("fixed-rule", "embedding"):
+        raise ValueError("unknown historical retrieval method")
+    model = (embedder or ArkTextEmbedder()) if method == "embedding" else None
     matches: tuple[HistoryMatch, ...] = ()
     if pool and query["evidence"]:
-        matches = rank_history(
-            document_text(query), {k: document_text(v) for k, v in pool.items()}, model, top_k=top_k
-        )
+        query_text = document_text(query)
+        documents = {cid: document_text(doc) for cid, doc in pool.items()}
+        if model is None:
+            scores = fixed_history_scores(query_text, documents)
+            ordered = sorted(scores, key=lambda cid: (-scores[cid], cid))[:top_k]
+            matches = tuple(HistoryMatch(cid, 1.0 - scores[cid]) for cid in ordered)
+        else:
+            matches = rank_history(query_text, documents, model, top_k=top_k)
     return {
         "schema_version": "nurse.history-retrieval/1",
         "query_id": query["case_id"],
         "query_sha256": digest(query),
         "library_sha256": library_sha256,
         "review_policy": library["review_policy"],
-        "model": getattr(model, "model_id", MODEL_ID),
-        "metric": "euclidean",
+        "method": method,
+        "rule_id": RULE_ID if method == "fixed-rule" else None,
+        "model": getattr(model, "model_id", MODEL_ID) if model is not None else None,
+        "metric": RULE_DISTANCE if method == "fixed-rule" else "euclidean",
         "eligible_count": len(pool),
         "provider_receipts": [asdict(row) for row in model.receipts]
         if matches and isinstance(model, ArkTextEmbedder)
@@ -319,6 +336,7 @@ def retrieve_verified_history(
     query_group_id: str,
     top_k: int = 5,
     embedding_model: str = MODEL_ID,
+    method: HistoryMethod = DEFAULT_HISTORY_METHOD,
     embedder: TextEmbedder | None = None,
     expected_library_sha256: str | None = None,
 ) -> JsonRecord:
@@ -326,10 +344,12 @@ def retrieve_verified_history(
     query = project_core(query_core)
     if query["case_id"] != query_id or query["decision_time_ns"] != decision_time:
         raise ValueError("historical retrieval query differs from the frozen incident")
-    if embedder is None:
+    if method == "embedding" and embedder is None:
         embedder = ArkTextEmbedder(embedding_model)
-    elif getattr(embedder, "model_id", embedding_model) != embedding_model:
+    elif (method == "embedding"
+          and getattr(embedder, "model_id", embedding_model) != embedding_model):
         raise ValueError("historical embedder differs from the plan model")
     return retrieve_document(
-        query, library, checksum, group_id=query_group_id, top_k=top_k, embedder=embedder
+        query, library, checksum, group_id=query_group_id, top_k=top_k, embedder=embedder,
+        method=method,
     )

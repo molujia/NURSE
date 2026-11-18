@@ -44,17 +44,18 @@ python scripts/dev/run_final_explainability_0ark.py \
 
 真实接入使用 `GplusFocusedCompositionPlan`：`schema_version="nurse.v2.gplus-one-case-composition/2"`、`investigation_profile="v2-ops-sre/15"`，配置是 `configs/v2/ops_sre_focused_profile.json`。从完整 checkout 使用这些配置与源文件；单独安装 wheel 不能代替计划要求的完整代码根目录。
 
-默认计划关闭历史检索。启用时使用 `GplusHistoricalCompositionPlan`（`nurse.v2.gplus-one-case-composition/3`），并在组合计划中填写以下字段。
+默认计划关闭历史检索。新计划启用历史使用 `GplusHistoryMethodPlan`（`nurse.v2.gplus-one-case-composition/4`）。既有版本 3 计划继续按其固定的嵌入模型运行。
 
 | 字段 | 取值 |
 | --- | --- |
 | `historical_library_path` | 已核验历史库 JSON 的绝对路径 |
 | `historical_library_sha256` | 该文件实际字节的 SHA-256 |
 | `historical_query_group_id` | 当前事件所属原始故障注入组的匿名标识，与历史库使用同一组标识规则，用于排除重放或重复采集 |
+| `history_method` | 版本 4 默认 `fixed-rule`，本地计算加权 Jaccard；显式选择 `embedding` 时计算向量欧氏距离 |
 | `history_embedding_model` | 默认 `doubao-embedding-vision-251215`，以文本作为输入。使用其他支持的型号时在计划中显式指定，检索回执核对实际型号 |
 | `history_top_k` | 选取的历史案例数上限，默认 5 |
 
-核心完成并冻结排名后，组合入口以该事件的决策时刻检索可用历史案例。调用环境需具备火山方舟 `ARK_API_KEY`。调查请求与 G+ 报告请求均通过 `historical_precedents` 接收同一组历史案例的规范文本和各自的来源引用。调查可据此提出待检验的解释或检查，当前事件的陈述仍须绑定本次供应的证据。组合输出中的 `history-retrieval.json` 保存检索次序与距离，成功报告的 `evidence.md` 按案例列出历史来源，便于 SRE 回查。
+核心完成并冻结排名后，组合入口以该事件的决策时刻检索可用历史案例。检索时仅嵌入方法需要火山方舟 `ARK_API_KEY`。调查请求与 G+ 报告请求均通过 `historical_precedents` 接收同一组历史案例的规范文本和各自的来源引用。调查可据此提出待检验的解释或检查，当前事件的陈述仍须绑定本次供应的证据。组合输出中的 `history-retrieval.json` 保存检索方法、次序与距离，成功报告的 `evidence.md` 按案例列出历史来源，便于 SRE 回查。
 
 计划必须引用当前代码与运行环境对应的新 core plan 及其 SHA-256。core 必须为 `core-only`、profile `v2-ops-isolated/2`、`source_core=null`，输出位于该 run 的 `core-results`。代码/skill/config 清单、输入 pin、推理身份清单、父计划、preparation key、source files 与 source descriptor 约束必须一致。代码改动后旧 plan 的 code pin 不再代表当前实现；不能只改一个 profile 名称沿用旧计划。
 

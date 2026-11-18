@@ -15,6 +15,7 @@ from nurse_rcl.v2.live.ops_sre_directed_stage import _inspect_stage
 from nurse_rcl.v2.live.ops_sre_gplus_case import (
     GplusFocusedCompositionPlan,
     GplusHistoricalCompositionPlan,
+    check_history_receipt,
     read_composition,
 )
 from nurse_rcl.v2.live.ops_sre_gplus_report import gplus_report_body
@@ -74,10 +75,9 @@ def inspect_gplus_case(path: Path, pin: str) -> dict[str, Any]:
     ):
         saved = _read_bytes(root / "history-retrieval.json", 64 * 1024**2)
         retrieval = json.loads(saved)
+        check_history_receipt(plan, retrieval)
         if (
             sha256_hex(saved) != result.get("history_retrieval_sha256")
-            or retrieval["library_sha256"] != plan.historical_library_sha256
-            or retrieval["model"] != plan.history_embedding_model
             or len(retrieval["matches"]) > plan.history_top_k
         ):
             raise ValueError("saved historical retrieval differs from its composition")

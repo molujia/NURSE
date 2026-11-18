@@ -4,6 +4,8 @@ NURSE is a research implementation for microservice root cause localization (RCL
 
 The core exposes the computations behind its evidence and scores. Investigation uses the resulting ranking to examine incident questions, collect further observations, and identify next checks. G+ carries selected evidence, its context, and its permitted use into the final report. Mitigation and recovery verification remain SRE decisions.
 
+Optional historical retrieval supplies earlier, reviewed cases after the core freezes its ranking. New history-enabled plans use a local rule that compares signals, evidence types, and directions of change. An explicit embedding mode ranks the same evidence texts by Euclidean distance. [Retrieval and evaluation guide](docs/history_retrieval_experiment.md)
+
 ## Contents
 
 - [Overview](#overview)

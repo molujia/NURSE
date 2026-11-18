@@ -35,6 +35,8 @@ def test_historical_context_retains_only_case_scoped_evidence_and_rejects_self_m
 def test_composition_pins_embedding_model_before_the_core_runs():
     from nurse_rcl.v2.live.ops_sre_gplus_case import (
         GplusHistoricalCompositionPlan,
+        GplusHistoryMethodPlan,
+        check_history_receipt,
         composition_grant,
         composition_sha256,
     )
@@ -52,6 +54,16 @@ def test_composition_pins_embedding_model_before_the_core_runs():
     assert composition_sha256(default) != composition_sha256(alternative)
     with pytest.raises(ValueError):
         GplusHistoricalCompositionPlan(**settings, history_embedding_model="arbitrary-model")
+    rules = GplusHistoryMethodPlan(**settings, history_method="fixed-rule")
+    embedded = GplusHistoryMethodPlan(**settings, history_method="embedding")
+    assert composition_sha256(embedded) != composition_sha256(rules)
+    assert composition_grant(rules)["history_method"] == "fixed-rule"
+    receipt = dict(library_sha256="e" * 64, model=None, method="fixed-rule",
+                   rule_id="nurse.typed-idf-jaccard/1",
+                   metric="idf-weighted-jaccard-distance")
+    check_history_receipt(rules, receipt)
+    with pytest.raises(ValueError):
+        check_history_receipt(embedded, receipt)
 
 
 def test_focused_request_sends_history_as_untrusted_side_information():

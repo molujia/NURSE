@@ -20,6 +20,12 @@ from pydantic import Field
 from nurse_rcl.artifacts import atomic_write_bytes, canonical_json_bytes, sha256_hex
 from nurse_rcl.schemas import StrictFrozenModel
 from nurse_rcl.v2.dynamic_verification.contracts import SHA256
+from nurse_rcl.v2.live.fixed_history_similarity import (
+    DEFAULT_HISTORY_METHOD,
+    RULE_DISTANCE,
+    RULE_ID,
+    HistoryMethod,
+)
 from nurse_rcl.v2.live.normal_queries import _read_bytes
 from nurse_rcl.v2.live.ops_case import inspect_ops_case
 from nurse_rcl.v2.live.ops_contracts import OpsSreFeedbackFactProfile, OpsSreFocusedProfile
@@ -78,6 +84,32 @@ class GplusHistoricalCompositionPlan(GplusFocusedCompositionPlan):
     history_top_k: int = Field(default=5, ge=1, strict=True)
 
 
+class GplusHistoryMethodPlan(GplusHistoricalCompositionPlan):
+    schema_version: Literal["nurse.v2.gplus-one-case-composition/4"] = (
+        "nurse.v2.gplus-one-case-composition/4"  # type: ignore[assignment]
+    )
+    history_method: HistoryMethod = DEFAULT_HISTORY_METHOD
+
+
+def _history_method(plan: GplusHistoricalCompositionPlan) -> HistoryMethod:
+    # Version 3 pinned a specific Ark model and always used Euclidean distance.
+    return plan.history_method if isinstance(plan, GplusHistoryMethodPlan) else "embedding"
+
+
+def check_history_receipt(plan: GplusHistoricalCompositionPlan, retrieval: dict[str, Any]) -> None:
+    method = _history_method(plan)
+    expected_model = plan.history_embedding_model if method == "embedding" else None
+    if (retrieval["library_sha256"] != plan.historical_library_sha256
+            or retrieval["model"] != expected_model):
+        raise ValueError("historical retrieval model or library differs from its plan")
+    if isinstance(plan, GplusHistoryMethodPlan) and (
+        retrieval.get("method") != method
+        or retrieval.get("metric") != ("euclidean" if method == "embedding" else RULE_DISTANCE)
+        or retrieval.get("rule_id") != (RULE_ID if method == "fixed-rule" else None)
+    ):
+        raise ValueError("historical retrieval method differs from its plan")
+
+
 def composition_sha256(plan: GplusCompositionPlan) -> str:
     return sha256_hex(canonical_json_bytes(plan.model_dump(mode="json")))
 
@@ -110,6 +142,9 @@ def composition_grant(plan: GplusCompositionPlan) -> dict[str, Any]:
             history_embedding_model=plan.history_embedding_model,
             history_top_k=plan.history_top_k,
         )
+    if isinstance(plan, GplusHistoryMethodPlan):
+        grant.update(schema_version="nurse.v2.gplus-composition-grant/4",
+                     history_method=plan.history_method)
     return grant
 
 
@@ -121,6 +156,7 @@ def read_composition(path: Path, pin: str) -> GplusCompositionPlan:
     model = {
         "nurse.v2.gplus-one-case-composition/2": GplusFocusedCompositionPlan,
         "nurse.v2.gplus-one-case-composition/3": GplusHistoricalCompositionPlan,
+        "nurse.v2.gplus-one-case-composition/4": GplusHistoryMethodPlan,
     }.get(value.get("schema_version"), GplusCompositionPlan)
     plan = model.model_validate_json(raw)
     if sha256_hex(raw) != pin or raw != canonical_json_bytes(plan.model_dump(mode="json")):
@@ -277,12 +313,9 @@ def run_gplus_case(
                     top_k=plan.history_top_k,
                     expected_library_sha256=plan.historical_library_sha256,
                     embedding_model=plan.history_embedding_model,
+                    method=_history_method(plan),
                 )
-                if (
-                    retrieval["library_sha256"] != plan.historical_library_sha256
-                    or retrieval["model"] != plan.history_embedding_model
-                ):
-                    raise ValueError("historical retrieval model or library differs from its plan")
+                check_history_receipt(plan, retrieval)
                 history = HistoricalContext.from_retrieval(
                     retrieval, query_id=core_result.identity.opaque_case_id,
                     core_result_digest=core_result.core_result_digest,
